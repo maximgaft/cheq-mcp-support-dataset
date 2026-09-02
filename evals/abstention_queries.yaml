@@ -1,0 +1,240 @@
+# Abstention eval set. Both directions, in one file.
+#
+# The corpus is customer-support tickets: technical and IT support, product
+# support, billing, returns, outages, pre-sales, HR, general inquiry - across
+# smart-home devices, marketing software, cloud infrastructure, projectors and
+# e-commerce. Nothing here should have a usable precedent in it.
+#
+# expect: no_precedent  - off topic, the tool should abstain
+# expect: precedent      - on topic, the tool should find something
+#
+# Both sides are handwritten on purpose. An earlier version of this file held only
+# negatives, and that hid a confound: handwritten text scores lower than the
+# corpus's generated text regardless of topic, so a set of handwritten negatives
+# measures provenance as much as it measures relevance. The handwritten positives
+# below are the control that exposes it - they are unambiguously on topic and
+# still score well below real tickets.
+#
+# Deliberately included are cases that are *shaped* like support tickets but sit
+# in a domain the corpus has never seen (tractor_hydraulics, bike_brakes). Those
+# are the hard ones: fluent problem reports with no precedent behind them, which
+# is exactly the failure mode abstention exists to catch. bike_brakes is the
+# closest to in-domain and is the one most likely to be answered wrongly.
+#
+# Adding a case is one entry.
+
+- id: recipe_braise
+  lang: en
+  expect: no_precedent
+  query: "How long should I braise a beef shank, and do I need to sear it first?"
+  note: cooking - no food or recipe content in the corpus
+
+- id: weather_forecast
+  lang: en
+  expect: no_precedent
+  query: "Will it rain in Barcelona next Tuesday afternoon?"
+  note: weather - no forecasting content, and no dates in the corpus at all
+
+- id: garden_tomatoes
+  lang: en
+  expect: no_precedent
+  query: "My tomato plants have yellow leaves with brown spots near the bottom."
+  note: horticulture - problem-shaped, but no gardening domain
+
+- id: cat_not_eating
+  lang: en
+  expect: no_precedent
+  query: "My cat has stopped eating dry food but still eats wet food. Two days now."
+  note: pet care - no animal or veterinary content
+
+- id: tractor_hydraulics
+  lang: en
+  expect: no_precedent
+  query: "The hydraulic pump on my tractor is leaking fluid near the coupling."
+  note: heavy machinery - support-shaped equipment fault, wrong domain entirely
+
+- id: vaccine_schedule
+  lang: en
+  expect: no_precedent
+  query: "What is the recommended vaccination schedule for a six-month-old?"
+  note: clinical advice - the corpus has medical *data storage*, never medicine
+
+- id: landlord_rent
+  lang: en
+  expect: no_precedent
+  query: "Can my landlord raise the rent mid-lease if the building changes owner?"
+  note: tenancy law - no legal content
+
+- id: world_cup_1998
+  lang: en
+  expect: no_precedent
+  query: "Who won the 1998 World Cup final and what was the score?"
+  note: sports trivia - factual lookup with no corpus grounding
+
+- id: sea_shanty
+  lang: en
+  expect: no_precedent
+  query: "Write a short poem about the sea in the style of a sea shanty."
+  note: creative writing - not a question about anything in the corpus
+
+- id: quadratic
+  lang: en
+  expect: no_precedent
+  query: "Solve for x: 3x squared minus 12x plus 9 equals zero."
+  note: mathematics - no computational or tutoring content
+
+- id: rome_airport
+  lang: en
+  expect: no_precedent
+  query: "What is the cheapest way to get from Rome city centre to Fiumicino airport?"
+  note: travel logistics - no travel domain
+
+- id: bronze_age
+  lang: en
+  expect: no_precedent
+  query: "Why did the Bronze Age collapse happen around 1177 BC?"
+  note: history - no historical content
+
+- id: squat_rest_days
+  lang: en
+  expect: no_precedent
+  query: "How many rest days should I take between heavy squat sessions?"
+  note: fitness training - no health or exercise content
+
+- id: sauerteig
+  lang: de
+  expect: no_precedent
+  query: "Wie lange muss ein Sauerteigbrot gehen, bevor ich es backe?"
+  note: baking - German off-topic control
+
+- id: zimmerpflanze
+  lang: de
+  expect: no_precedent
+  query: "Meine Zimmerpflanze verliert Blätter, obwohl ich sie regelmäßig gieße."
+  note: houseplants - problem-shaped in German, no corpus domain
+
+- id: vitamin_d
+  lang: de
+  expect: no_precedent
+  query: "Welche Dosis Vitamin D wird für Erwachsene im Winter empfohlen?"
+  note: clinical advice in German
+
+- id: nebenkosten
+  lang: de
+  expect: no_precedent
+  query: "Darf mein Vermieter die Nebenkosten rückwirkend für drei Jahre nachfordern?"
+  note: German tenancy law - billing-adjacent wording, entirely different domain
+
+- id: zug_salzburg
+  lang: de
+  expect: no_precedent
+  query: "Wie komme ich mit dem Zug von München nach Salzburg am günstigsten?"
+  note: travel logistics in German
+
+- id: bike_brakes
+  lang: de
+  expect: no_precedent
+  query: "Die Bremsen meines Fahrrads quietschen laut bei Nässe."
+  note: bicycle repair - the hardest case, reads like a product fault report
+
+- id: berliner_mauer
+  lang: de
+  expect: no_precedent
+  query: "Warum wurde die Berliner Mauer 1961 gebaut?"
+  note: history in German
+
+# ---------------------------------------------------------------------------
+# Handwritten, unambiguously ON topic. Every one of these has obvious coverage
+# in the corpus, so a tool that abstains on them is wrong. They are the control
+# for the provenance effect: written by a person, not by the corpus generator.
+# ---------------------------------------------------------------------------
+
+- id: duplicate_charge
+  lang: en
+  expect: precedent
+  query: "I was charged twice for my subscription this month and need a refund for the duplicate."
+  note: billing - the corpus has a Billing and Payments queue of 4,000 tickets
+
+- id: login_reset_email
+  lang: en
+  expect: precedent
+  query: "I cannot log into my account, the password reset email never arrives."
+  note: account access - heavily represented
+
+- id: projector_flicker
+  lang: en
+  expect: precedent
+  query: "The projector flickers and loses signal about ten minutes after switching it on."
+  note: hardware fault - projectors appear throughout the corpus
+
+- id: service_down
+  lang: en
+  expect: precedent
+  query: "Your service has been down since this morning and we cannot reach the dashboard."
+  note: outage - matches Service Outages and Maintenance
+
+- id: return_device
+  lang: en
+  expect: precedent
+  query: "I want to return a device I bought last week because it does not fit our setup."
+  note: returns - matches Returns and Exchanges
+
+- id: crm_integration
+  lang: en
+  expect: precedent
+  query: "Does your product integrate with Salesforce, and can you send documentation?"
+  note: pre-sales compatibility - a very common shape in this corpus
+
+- id: app_crash_reports
+  lang: en
+  expect: precedent
+  query: "The mobile app crashes every time I open the reports section."
+  note: software fault
+
+- id: invoice_unclear
+  lang: en
+  expect: precedent
+  query: "Please explain the charges on my latest invoice, several lines are unclear."
+  note: billing clarification
+
+- id: security_incident
+  lang: en
+  expect: precedent
+  query: "We think our account was accessed by someone else and want this investigated urgently."
+  note: security - the corpus carries many data-breach and security tickets
+
+- id: slow_after_update
+  lang: en
+  expect: precedent
+  query: "Everything became very slow right after the last update was installed."
+  note: performance regression - Performance is a top-five tag
+
+- id: rechnung_doppelt
+  lang: de
+  expect: precedent
+  query: "Mir wurde die Rechnung diesen Monat zweimal abgebucht, ich brauche eine Erstattung."
+  note: German billing
+
+- id: anmeldung_fehlgeschlagen
+  lang: de
+  expect: precedent
+  query: "Ich kann mich nicht anmelden, die E-Mail zum Zuruecksetzen des Passworts kommt nie an."
+  note: German account access
+
+- id: dienst_nicht_erreichbar
+  lang: de
+  expect: precedent
+  query: "Der Dienst ist seit heute Morgen nicht erreichbar und wir kommen nicht ins Dashboard."
+  note: German outage
+
+- id: geraet_umtausch
+  lang: de
+  expect: precedent
+  query: "Ich moechte ein Geraet zurueckgeben, das ich letzte Woche gekauft habe."
+  note: German returns
+
+- id: absturz_nach_update
+  lang: de
+  expect: precedent
+  query: "Die Software stuerzt seit dem letzten Update staendig ab."
+  note: German software fault
