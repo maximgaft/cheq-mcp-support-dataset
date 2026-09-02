@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "cheq-tickets": {
+      "command": "uv",
+      "args": ["run", "--directory", ".", "python", "-m", "server"]
+    }
+  }
+}

@@ -1,0 +1,14 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Data: sources are fetched, artifacts are built
+data/*.csv
+data/interim/
+data/.cache/
