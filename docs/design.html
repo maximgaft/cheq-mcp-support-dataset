@@ -1,0 +1,90 @@
+<!doctype html><meta charset="utf-8"><title>Support Ticket MCP Server</title>
+<style>
+@page { size: A4; margin: 10mm 11mm; }
+* { box-sizing: border-box; }
+body { font: 9.1pt/1.29 "Helvetica Neue", Arial, sans-serif; color: #16181d; margin: 0; }
+.head { border-bottom: 1.5px solid #16181d; padding-bottom: 5px; margin-bottom: 8px; }
+.head h1 { font-size: 15pt; margin: 0 0 2px; letter-spacing: -.2px; }
+.head p { margin: 0; font-size: 9.3pt; color: #444; }
+.head .who { float: right; font-size: 8.4pt; color: #666; text-align: right; line-height: 1.3; }
+.cols { column-count: 2; column-gap: 7mm; }
+h2 { font-size: 9.4pt; margin: 9px 0 3px; text-transform: uppercase; letter-spacing: .5px;
+     color: #0b4f6c; break-after: avoid; }
+h2:first-child { margin-top: 0; }
+section:first-child h2 { margin-top: 0; }
+p, li { margin: 0 0 4px; }
+ul { margin: 0 0 5px; padding-left: 13px; }
+li { padding-left: 1px; }
+b, strong { color: #000; }
+.k { font-family: ui-monospace, Menlo, monospace; font-size: 8.3pt; background: #f0f2f5;
+     padding: 0 2px; border-radius: 2px; }
+table { width: 100%; border-collapse: collapse; font-size: 8.3pt; margin: 2px 0 6px; }
+td { border-top: .5px solid #d5d9e0; padding: 2.2px 3px; vertical-align: top; }
+tr:first-child td { border-top: none; }
+td.l { width: 47%; }
+.box { background: #f5f7fa; border-left: 2.5px solid #0b4f6c; padding: 5px 7px; margin: 0 0 6px; }
+.box p { margin: 0; }
+.foot { border-top: 1.5px solid #16181d; margin-top: 7px; padding-top: 4px;
+        font-size: 8.3pt; color: #444; column-span: all; }
+.n { color: #0b4f6c; font-weight: 600; }
+</style>
+<div class="head">
+  <div class="who">Maxim Gaft<br>AI Engineer — home assignment</div>
+  <h1>Support-ticket MCP server</h1>
+  <p>Answers natural-language questions about 40,064 bilingual support tickets — and knows which questions it cannot answer.</p>
+</div>
+<div class="cols">
+<section><h2>Design</h2>
+<p>Three source CSVs → an 8-stage pipeline (<span class="n">90s</span>, deterministic, no API key) → a DuckDB file plus a 31,795-vector index. Four tools over stdio:</p>
+<ul>
+<li><span class="k">get_schema</span> — columns, the values each takes, and an explicit list of what this data <i>cannot</i> answer.</li>
+<li><span class="k">run_sql</span> — one read-only SELECT, guarded.</li>
+<li><span class="k">find_similar_tickets</span> — nearest past tickets and their replies, or an explicit <i>no precedent</i>.</li>
+<li><span class="k">suggest_routing</span> — predicted queue and priority, with how far to trust it.</li>
+</ul>
+<p><b>No LLM inside the server.</b> Claude Code supplies the model; the server supplies grounded facts and refusals. It therefore needs no API key, and every tool is deterministic and testable.</p></section>
+<section><h2>Why — make the model unable to be confidently wrong</h2>
+<div class="box"><p>An LLM handed five weakly-related tickets still writes a fluent, confident reply. Models do not hedge by default. A tool's job is not to give the model <i>access</i> — it is to remove the ways it can be wrong.</p></div>
+<p>Three instances, each measured rather than assumed:</p>
+<ul>
+<li><b>It abstains.</b> The similarity floor is derived by sweeping thresholds on held-out data, not chosen. It accepts <span class="n">97.5%</span> of real tickets and <span class="n">0%</span> of 20 off-topic queries.</li>
+<li><b>It says how much to trust itself.</b> Routing is <span class="n">98.5%</span> accurate when a close precedent exists and <span class="n">49%</span> when not. That spread is the product; the label alone is not.</li>
+<li><b>The schema removes a trap.</b> Tags are stored positionally, so <span class="k">GROUP BY tag_1</span> returns a confidently wrong number. Those columns are absent — the wrong query is unwritable, not discouraged.</li>
+</ul></section>
+<section><h2>What this dataset cannot support</h2>
+<p><span class="n">7.6%</span> of answers are not support replies at all — customer text sitting in the answer column. There are no timestamps, no customer identifier, no money, no outcome field.</p>
+<p>So this demonstrates a <i>mechanism</i>. It is not evidence about customers, and the page does not pretend otherwise.</p></section>
+<section><h2>Business impact</h2>
+<p><b>The expensive thing in a support queue is elapsed time, not agent minutes.</b> A first reply that says "please provide details" guarantees another exchange — the customer cannot tell what to send, and each leg is hours or days. <span class="k">reply_state</span> marks which past replies named something fetchable, so a draft copies the ones that ended the round trip rather than the ones that caused it.</p>
+<p><b>About half of all first replies are dead ends</b> — they neither resolve the ticket nor say what to send. <span class="n">49.8%</span> across all 39,739 answers, labelled by Haiku 4.5 for <span class="n">$9.53</span>; <span class="n">55%</span> across the 40 I read by hand. Two independent estimates agreeing is the claim — its four-way taxonomy agrees with mine only <span class="n">70%</span>, and why the collapse survives that is in <span class="k">reports/labels.md</span>.</p>
+<p>The delivery shape is <b>agent-to-agent handoff</b> — a front-line agent classifies and hands off to a specialist with the systems access. Calibrated confidence matters more there than accuracy: hand off above a threshold, escalate below it. A wrong handoff is recoverable; a confident wrong answer to a customer is not.</p>
+<p><b>The transferable claim.</b> CHEQ's Data &amp; AI team will be asked to put internal data behind LLM tools. The bottleneck is not access, it is trust: point a model at raw warehouse tables and a stakeholder gets confidently wrong numbers, and the data team ends up trusted <i>less</i>. This repo is a working contract for doing that safely — the dataset is the substrate, not the point.</p></section>
+<section><h2>Risks and controls</h2>
+<table>
+<tr><td class="l">Drafts a reply with no real precedent</td><td>Calibrated floor; returns <span class="k">no_precedent</span></td></tr>
+<tr><td class="l">Confidence misread on typed input</td><td>Two signals; guidance when they diverge</td></tr>
+<tr><td class="l">Silently wrong tag aggregates</td><td>Positional columns absent from schema</td></tr>
+<tr><td class="l">SQL reads local files / mutates</td><td>Capability removed, not denylisted</td></tr>
+<tr><td class="l">Memorised test set inflates scores</td><td>Deduplicated before splitting</td></tr>
+<tr><td class="l">German quietly worse than English</td><td>Every metric sliced by language</td></tr>
+</table></section>
+<section><h2>Deliberately not built</h2>
+<ul>
+<li><b>Vector database</b> — brute-force cosine over 40k×384 is sub-millisecond, and exact search adds no approximation error to confound the eval.</li>
+<li><b>An LLM in the server</b> — the host already has one. Two would double cost and make the tools unevaluable.</li>
+<li><b>A regex for the specific/vague split</b> — most replies open "could you please provide details" and then name the account number and the date. A rule keyed on that phrase inverts the answer on every one.</li>
+<li><b>A reranker</b> — the ranking bias turned out to be a bug: subject-less tickets were 27% of top hits at a 10% base rate. Fixing that cost 0.006 macro-F1.</li>
+<li><b>Fine-tuning</b> — the corpus is synthetic; a model would learn the template, not the domain.</li>
+</ul></section>
+<section><h2>Production</h2>
+<ul>
+<li>Corpus becomes Zendesk/Jira via Snowflake; the index rebuilds on an Airflow schedule and the abstention floor re-calibrates alongside it, since coverage grows.</li>
+<li><span class="k">draft_reply</span> moves server-side — a webhook has no host model — and posts to Slack under the ticket for a human to send.</li>
+<li><b>The index sits outside the warehouse's policy boundary.</b> Snowflake row policies never see a vector search — embeddings are a copy of the data outside them. Re-gate separately: fetch permitted ids, mask, <i>then</i> search. The <span class="k">queue</span> filter already works this way.</li>
+<li>Recency enters the ranking: a three-year-old precedent may describe a dead product.</li>
+</ul></section>
+</div>
+<div class="foot">
+<b>Runs and evaluates offline.</b> <span class="k">make build</span> 90s · <span class="k">make eval</span> 27s · no key to run or evaluate; only the one-off labelling pass uses one.
+Routing <span class="n">0.691</span> macro-F1 over 10 queues against a 0.045 baseline (en 0.758 / de 0.590). ≈<span class="n">2k</span> host tokens per answer — handing the model the table instead is ~600k and will not fit. Method in <span class="k">reports/</span>.
+</div>
