@@ -18,26 +18,49 @@ The build connection writes, so it cannot be read-only. It does not need file
 access either, because pandas reads the parquet and DuckDB ingests from memory.
 """
 
+import sys
 from pathlib import Path
 
 import duckdb
 import pandas as pd
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from label import collapse  # noqa: E402
+
 DATA = Path(__file__).resolve().parents[1] / "data"
 IN = DATA / "interim" / "05_split.parquet"
 OUT = DATA / "interim" / "08_tickets.duckdb"
+LABELS = DATA / "answer_labels.parquet"
 
 COLUMNS = [
     "ticket_id", "source", "split", "language", "queue", "priority", "type",
     "subject", "body", "answer", "body_words", "is_indexable",
 ]
+# answer_kind and ask_is_specific come from pipeline/label.py, which needs an API
+# key. The columns are created either way so the schema does not change shape
+# depending on whether that pass has been run - they are simply null without it.
+LABEL_COLUMNS = ["answer_kind", "ask_is_specific"]
+# reply_state collapses those two into the distinction the business claim uses.
+# Derived here so no consumer re-implements the rule and gets it subtly wrong.
 TAG_SLOTS = [f"tag_{i}" for i in range(1, 9)]
 
 
 def main() -> None:
     corpus = pd.read_parquet(IN)
 
-    tickets = corpus[COLUMNS]
+    tickets = corpus[COLUMNS].copy()
+    if LABELS.exists():
+        labels = pd.read_parquet(LABELS).rename(columns={"kind": "answer_kind"})
+        tickets = tickets.merge(labels[["ticket_id", *LABEL_COLUMNS]], on="ticket_id", how="left")
+        print(f"  joined {labels.ticket_id.nunique():,} answer labels")
+    else:
+        for column in LABEL_COLUMNS:
+            tickets[column] = None
+        print("  no answer labels found - run `make label` to populate them")
+    tickets["reply_state"] = [
+        collapse(k, bool(sp)) if isinstance(k, str) else None
+        for k, sp in zip(tickets.answer_kind, tickets.ask_is_specific)
+    ]
     tags = (
         corpus.melt(id_vars="ticket_id", value_vars=TAG_SLOTS, value_name="tag")[["ticket_id", "tag"]]
         .dropna(subset=["tag"])
@@ -55,7 +78,7 @@ def main() -> None:
     con.execute("CREATE INDEX idx_tags_ticket ON ticket_tags(ticket_id)")
     con.close()
 
-    print(f"  tickets      {len(tickets):>7,} rows, {len(COLUMNS)} columns")
+    print(f"  tickets      {len(tickets):>7,} rows, {len(tickets.columns)} columns")
     print(f"  ticket_tags  {len(tags):>7,} rows, {tags.tag.nunique():,} distinct tags")
 
     # Verify the serving contract against what we just built, not in the abstract.

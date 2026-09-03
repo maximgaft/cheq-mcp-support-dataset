@@ -13,11 +13,11 @@ dataset that happens to share three column names: no answers, no type, no tags,
 a 42-value queue taxonomy instead of 10, a 5-value priority scale instead of 3,
 and 100% German. It can join neither the analytical nor the precedent story.
 
-It is NOT an abstention test set, though an earlier version of this pipeline
-treated it as one. Those tickets are semantically in-domain - ordinary support
-requests about ordinary problems - so retrieval finds plausible neighbours for
-them, correctly. Abstention is measured against handwritten queries in
-evals/abstention_queries.yaml instead.
+It is dropped, not written out. An earlier version kept it as an abstention test
+set; that was wrong - those tickets are semantically in-domain, so retrieval finds
+plausible neighbours for them, correctly. Abstention is measured against
+handwritten queries in evals/abstention_queries.yaml instead, and nothing else
+ever read the file.
 """
 
 import re
@@ -28,7 +28,6 @@ import pandas as pd
 DATA = Path(__file__).resolve().parents[1] / "data"
 IN = DATA / "interim" / "02_cleaned.parquet"
 OUT_CORPUS = DATA / "interim" / "03_corpus.parquet"
-OUT_GERMAN = DATA / "interim" / "03_german_norm.parquet"
 
 MIN_INDEX_WORDS = 5  # 1-4 words is "Requesting Assistance"; 5+ carries a topic
 ROLE_OVERLAP = 0.8
@@ -79,8 +78,7 @@ def main() -> None:
     print(f"    not: < {MIN_INDEX_WORDS} words     {(~long_enough).sum():>6}")
 
     corpus.to_parquet(OUT_CORPUS, index=False)
-    german.to_parquet(OUT_GERMAN, index=False)
-    print(f"\n  wrote {OUT_CORPUS.relative_to(DATA.parent)} and {OUT_GERMAN.name}")
+    print(f"\n  wrote {OUT_CORPUS.relative_to(DATA.parent)}")
 
 
 if __name__ == "__main__":

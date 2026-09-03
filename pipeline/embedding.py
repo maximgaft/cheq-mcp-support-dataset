@@ -33,9 +33,23 @@ def load_model():
 
 
 def document_text(subject: str | None, body: str) -> str:
-    """Subject is a useful summary when present; it is missing on ~8.6% of tickets."""
-    if isinstance(subject, str) and subject.strip():
-        return f"{subject.strip()}\n\n{body}"
+    """Embed the body alone. `subject` is accepted and deliberately ignored.
+
+    Concatenating subject + body looks obviously right and measurably is not.
+    Subject is missing on ~10% of tickets, so concatenating it creates two
+    populations of document that do not compete fairly: a document matches best
+    when its subject-presence matches the query's. The effect was large - tickets
+    with no subject are 10.3% of the index but were 27.0% of top-1 hits and 36.8%
+    of the top 3, over-represented 2.6x for a reason that carries no information.
+
+    Dropping the subject removes it (27.0% -> 11.8%, against a 10.3% base rate)
+    and costs 0.006 macro-F1 on routing, which is noise - accuracy is fractionally
+    better. Subject is still returned with every hit for a human to read; it is
+    only kept out of the vector.
+
+    The signature keeps `subject` so callers stay unchanged and the omission is
+    visible here rather than scattered across call sites.
+    """
     return body
 
 

@@ -14,7 +14,7 @@ from pathlib import Path
 from mcp.server.mcpserver import MCPServer
 
 from server import db
-from server.retrieval import Index, query_text
+from server.retrieval import Index
 
 ROOT = Path(__file__).resolve().parents[1]
 INTERIM = ROOT / "data" / "interim"
@@ -24,9 +24,8 @@ THRESHOLDS_PATH = INTERIM / "07_thresholds.json"
 ROUTING_METRICS_PATH = INTERIM / "routing_metrics.json"
 
 MAX_K = 20
-COVERAGE_FACETS = ["queue", "priority", "type", "language"]
 
-FACET_COLUMNS = ["queue", "priority", "type", "language", "split", "source"]
+FACET_COLUMNS = ["queue", "priority", "type", "language"]
 
 CANNOT_ANSWER = [
     "Anything over time. There are no timestamps - no trends, seasonality, "
@@ -53,6 +52,16 @@ SCHEMA_NOTES = [
     "val and test exist so retrieval and routing can be measured on unseen data.",
     "The corpus is synthetic, generated for classifier training. It demonstrates "
     "mechanism; it is not evidence about real customers.",
+    "reply_state says whether the customer could act on that first reply alone: "
+    "resolved, actionable_ask (it named something fetchable, like the system logs "
+    "or an invoice number), or dead_end (it asked for 'details', only acknowledged, "
+    "or was not a support reply at all). Dead ends cost a round trip and buy nothing, "
+    "and about half of all first replies are one. Prefer actionable_ask precedents "
+    "when drafting.",
+    "answer_kind and ask_is_specific are the raw labels reply_state is derived from. "
+    "They agree with 40 hand-adjudicated tickets only 70% of the time, so do not quote "
+    "them on their own - reply_state agrees 75% and is distributionally unbiased. "
+    "See reports/labels.md.",
 ]
 
 mcp = MCPServer(
@@ -190,6 +199,11 @@ def find_similar_tickets(
 
     Both modes search the same 31,795 indexed tickets; only the floor differs.
 
+    Every hit carries reply_state: whether that past reply resolved the ticket,
+    named something the customer could fetch (actionable_ask), or was a dead end
+    that asked for "details" and cost a round trip. About half are dead ends -
+    prefer the actionable ones when drafting a first reply.
+
     Every hit includes the full original answer, so k is capped at 20 and defaults
     to 5. Similarity is on a centred scale where 0.0 means unrelated - values
     around 0.6-0.9 are genuinely similar, and the floor sits at 0.45.
@@ -218,13 +232,25 @@ def suggest_routing(text: str) -> dict:
     """Predict which queue and priority a ticket belongs to, with how much to
     trust the prediction, and the neighbours it came from.
 
-    Read expected_accuracy before acting on the label. It is measured, not
-    estimated: on 4,008 held-out tickets, predictions whose top_similarity was
-    above 0.80 were right 98.5% of the time, and those below 0.60 were right 49%
-    of the time. A low value means route it to a human.
+    Two confidence figures come back, both measured on 4,008 held-out tickets,
+    and reading them together is the point.
+
+    expected_accuracy comes from top_similarity: above 0.80 predictions were right
+    98.5% of the time, below 0.60 only 49%. It is the sharper signal (AUC 0.744)
+    but it is only comparable within one input shape - handwritten text scores
+    about 26% lower than this corpus's generated text whatever its topic.
+
+    expected_accuracy_by_agreement comes from how many of the nearest neighbours
+    share a queue. Weaker (AUC 0.651) but it barely moves between generated and
+    handwritten input, so it survives the effect that breaks the other one.
+
+    When they diverge a `guidance` string explains which to believe. A large gap
+    with agreement higher usually means the input is a typed question rather than
+    a ticket. A low value on both means route it to a human.
 
     The neighbours are returned so the prediction can be checked rather than
-    taken on trust; `voted` marks the ones that actually decided it. There is no
+    taken on trust; `voted` marks the ones that decided it, and their queues are
+    what neighbour_agreement is computed over. There is no
     k parameter because k was measured rather than chosen - widening the vote
     degrades it sharply, since a larger neighbourhood floods the small queues
     with the majority class.
@@ -234,68 +260,6 @@ def suggest_routing(text: str) -> dict:
     accordingly. Full breakdown in reports/routing.md.
     """
     return index().route(text)
-
-
-@mcp.tool()
-def precedent_coverage(group_by: str = "queue", per_group: int = 20) -> dict:
-    """Measure where the corpus has usable precedent and where it does not.
-
-    Samples held-out tickets, searches the index with each one, and reports the
-    share that find a precedent above the floor. Low coverage in a group means
-    agents handling that kind of ticket have little institutional precedent to
-    work from - which is a documentation gap, not a tool failure.
-
-    This is the one question the corpus can answer that no single retrieval call
-    can: it is a property of the whole collection rather than of one result.
-    Queries are drawn from val/test, so they are never in the index.
-
-    Slower than the other tools - it embeds group_by count x per_group tickets,
-    a few seconds. group_by must be queue, priority, type or language.
-    """
-    if group_by not in COVERAGE_FACETS:
-        return {"error": f"group_by must be one of {COVERAGE_FACETS}, got {group_by!r}"}
-
-    per_group = min(max(int(per_group), 5), 50)
-    rows = connection().execute(f"""
-        SELECT ticket_id, grp, subject, body FROM (
-            SELECT ticket_id, {group_by} AS grp, subject, body,
-                   row_number() OVER (PARTITION BY {group_by} ORDER BY hash(ticket_id)) AS rn
-            FROM tickets WHERE split IN ('val', 'test')
-        ) WHERE rn <= {per_group}
-    """).df()
-
-    idx = index()
-    rows["top1"] = [
-        idx.top1(query_text(s, b)) for s, b in zip(rows.subject, rows.body)
-    ]
-
-    corpus_median = float(rows.top1.median())
-    groups = []
-    for name, g in rows.groupby("grp"):
-        groups.append({
-            group_by: name,
-            "sampled": len(g),
-            "median_similarity": round(float(g.top1.median()), 3),
-            "p25_similarity": round(float(g.top1.quantile(0.25)), 3),
-            "share_below_corpus_median": round(float((g.top1 < corpus_median).mean()), 3),
-        })
-    groups.sort(key=lambda row: row["median_similarity"])
-
-    return {
-        "group_by": group_by,
-        "corpus_median_similarity": round(corpus_median, 3),
-        "abstention_floor": idx.floor,
-        "sampled_from": "val + test (never in the index)",
-        "groups": groups,
-        "note": (
-            "Thinnest precedent first. These are similarity distributions, not pass "
-            "rates against the abstention floor - almost every in-domain ticket clears "
-            f"that floor ({idx.floor}), so a share against it carries no information. "
-            "Read the medians comparatively: a group well below "
-            f"{round(corpus_median, 3)} is one where agents have weaker precedent to "
-            "work from, which points at a documentation gap rather than a tool failure."
-        ),
-    }
 
 
 if __name__ == "__main__":

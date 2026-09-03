@@ -1,0 +1,63 @@
+# Adjudicated labels for the `answer` field, used to measure any bulk classifier
+# before it is trusted on all 39,739 indexable tickets.
+#
+# Sampled 2 tickets per (queue x language) so small queues and German are not
+# swamped by Technical Support English. Each was read in full and labelled by the
+# criterion below. These are careful reads, not a crowd consensus - correct
+# anything that looks wrong, the file is the reference and it should be argued
+# with.
+#
+#   resolution           the answer actually answers: substantive, specific,
+#                        actionable without a further round trip
+#   information_request  cannot proceed until the customer supplies something
+#                        specific (logs, account number, error text, config)
+#   acknowledgement      received / working on it / will call - no substance and
+#                        no specific ask
+#   not_a_support_reply  the text is not a support reply at all. Usually it reads
+#                        customer-side ("I am writing to report..."), or it tells
+#                        the reporter to go investigate their own ticket.
+#
+# The last class is the one that matters most: those rows are unusable as
+# precedent, and the role-confusion filter in pipeline/03_filter.py does not
+# catch them because it only inspects the body, never the answer.
+
+- {id: multilang_v2:5504, label: information_request, ask_is_specific: true}
+- {id: multilang_v1:13, label: resolution}
+- {id: multilang_v1:10485, label: resolution}
+- {id: multilang_v1:2631, label: acknowledgement}
+- {id: multilang_v1:4651, label: information_request, ask_is_specific: false}
+- {id: multilang_v2:16393, label: acknowledgement}
+- {id: multilang_v2:11887, label: resolution}
+- {id: multilang_v2:10850, label: information_request, ask_is_specific: true}
+- {id: multilang_v1:21911, label: acknowledgement}
+- {id: multilang_v2:14822, label: information_request, ask_is_specific: true}
+- {id: multilang_v2:4283, label: information_request, ask_is_specific: true}
+- {id: multilang_v1:15951, label: acknowledgement}
+- {id: multilang_v2:16097, label: resolution}
+- {id: multilang_v1:3377, label: information_request, ask_is_specific: true}
+- {id: multilang_v1:16154, label: not_a_support_reply}
+- {id: multilang_v2:14916, label: information_request, ask_is_specific: false}
+- {id: multilang_v1:9874, label: not_a_support_reply}
+- {id: multilang_v1:14251, label: acknowledgement}
+- {id: multilang_v1:11536, label: information_request, ask_is_specific: true}
+- {id: multilang_v1:23112, label: acknowledgement}
+- {id: multilang_v1:8562, label: information_request, ask_is_specific: true}
+- {id: multilang_v1:754, label: information_request, ask_is_specific: true}
+- {id: multilang_v2:19831, label: acknowledgement}
+- {id: multilang_v1:12384, label: not_a_support_reply}
+- {id: multilang_v1:8286, label: acknowledgement}
+- {id: multilang_v1:5585, label: acknowledgement}
+- {id: multilang_v1:17333, label: acknowledgement}
+- {id: multilang_v1:12736, label: not_a_support_reply}
+- {id: multilang_v1:20266, label: acknowledgement}
+- {id: multilang_v1:27049, label: information_request, ask_is_specific: true}
+- {id: multilang_v1:15117, label: information_request, ask_is_specific: false}
+- {id: multilang_v1:4698, label: information_request, ask_is_specific: true}
+- {id: multilang_v2:1806, label: information_request, ask_is_specific: true}
+- {id: multilang_v1:28309, label: resolution}
+- {id: multilang_v1:12310, label: acknowledgement}
+- {id: multilang_v1:25112, label: resolution}
+- {id: multilang_v1:23910, label: not_a_support_reply}
+- {id: multilang_v1:23722, label: acknowledgement}
+- {id: multilang_v1:21861, label: information_request, ask_is_specific: true}
+- {id: multilang_v1:1730, label: information_request, ask_is_specific: false}

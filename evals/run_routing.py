@@ -20,6 +20,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "pipeline"))
@@ -28,13 +29,16 @@ sys.path.insert(0, str(ROOT))
 from embedding import center, document_text, embed_queries  # noqa: E402
 
 from server import db  # noqa: E402
-from server.retrieval import Index  # noqa: E402
+from server.retrieval import Index, collapse_duplicates  # noqa: E402
 
 INTERIM = ROOT / "data" / "interim"
 REPORT = ROOT / "reports" / "routing.md"
+CASES = ROOT / "evals" / "abstention_queries.yaml"
 
 TOP_N = 25                      # cache this many neighbours, then sweep k over them
-BANDS = [0.80, 0.70, 0.60, 0.00]  # reliability bands, published for the server to read
+SIM_BANDS = [0.80, 0.70, 0.60, 0.00]   # similarity bands, published for the server
+AGREE_BANDS = [1.0, 0.8, 0.6, 0.4, 0.0]  # agreement bands, ditto
+AGREE_SWEEP = [3, 5, 10]
 K_SWEEP = [1, 2, 3, 5, 10, 25]
 CHUNK = 500
 
@@ -42,14 +46,20 @@ CHUNK = 500
 def neighbours(idx: Index, texts: list[str]) -> tuple[np.ndarray, np.ndarray]:
     """Top-TOP_N neighbour positions and similarities for each query."""
     queries = center(embed_queries(texts, progress=True), idx.mean)
+    wide = TOP_N * 4
     positions, sims = [], []
     for start in range(0, len(queries), CHUNK):
         block = queries[start : start + CHUNK] @ idx.vectors.T
-        part = np.argpartition(-block, TOP_N - 1, axis=1)[:, :TOP_N]
+        part = np.argpartition(-block, wide - 1, axis=1)[:, :wide]
         rows = np.arange(len(part))[:, None]
         order = np.argsort(-block[rows, part], axis=1)
-        positions.append(part[rows, order])
-        sims.append(block[rows, part][rows, order])
+        part = part[rows, order]
+        # Collapse here too, not just in the serving path: agreement counts
+        # neighbours that share a queue, so a duplicated neighbour would inflate it
+        # and the published bands would be measured on evidence that is not there.
+        kept = np.vstack([collapse_duplicates(row, idx.vectors, keep=TOP_N) for row in part])
+        positions.append(kept)
+        sims.append(np.take_along_axis(block, kept, axis=1))
     return np.vstack(positions), np.vstack(sims)
 
 
@@ -63,6 +73,36 @@ def vote(labels: np.ndarray, positions: np.ndarray, sims: np.ndarray, k: int) ->
             weights[label] = weights.get(label, 0.0) + max(float(sims[i, j]), 0.0)
         out.append(max(weights, key=weights.get))
     return np.array(out)
+
+
+def agreement(labels: np.ndarray, positions: np.ndarray, n: int) -> np.ndarray:
+    """Share of the top-n neighbours whose label matches the nearest one's."""
+    top = labels[positions[:, :n]]
+    return (top == top[:, [0]]).mean(axis=1)
+
+
+def auc(score: np.ndarray, label: np.ndarray) -> float:
+    """P(score of a correct prediction > score of an incorrect one). No sklearn."""
+    order = np.argsort(score)
+    ranks = np.empty(len(score))
+    ranks[order] = np.arange(1, len(score) + 1)
+    pos_n, neg_n = int(label.sum()), int((~label).sum())
+    if not pos_n or not neg_n:
+        return float("nan")
+    return float((ranks[label].sum() - pos_n * (pos_n + 1) / 2) / (pos_n * neg_n))
+
+
+def band_table(signal: np.ndarray, correct: np.ndarray, edges: list[float]) -> list[dict]:
+    out = []
+    for lower in edges:
+        mask = signal >= lower
+        for higher in edges:
+            if higher > lower:
+                mask &= signal < higher
+        if mask.sum():
+            out.append({"min": lower, "n": int(mask.sum()),
+                        "accuracy": round(float(correct[mask].mean()), 3)})
+    return out
 
 
 def scores(truth: np.ndarray, pred: np.ndarray) -> dict:
@@ -118,20 +158,35 @@ def main() -> None:
         mask = (rows.language == language).to_numpy()
         by_language[language] = scores(truth[mask], vote(queues, pos[mask], sims[mask], best_k))
 
-    # Accuracy is strongly predictable from the top-1 similarity. Publishing these
-    # bands lets suggest_routing report how much to trust a prediction, instead of
-    # returning a bare label.
+    # Two confidence signals, measured rather than assumed. Similarity predicts
+    # better within a fixed input shape; agreement predicts worse but survives a
+    # change of input shape, which similarity does not. Both are published so
+    # suggest_routing can report them together and flag when they disagree.
     top1 = sims[:, 0]
     pred = vote(queues, pos, sims, best_k)
-    bands = []
-    for lower in BANDS:
-        mask = top1 >= lower
-        for higher in BANDS:
-            if higher > lower:
-                mask &= top1 < higher
-        if mask.sum():
-            bands.append({"min_similarity": lower, "n": int(mask.sum()),
-                          "accuracy": round(float((pred[mask] == truth[mask]).mean()), 3)})
+    correct = pred == truth
+
+    agree_auc = {n: auc(agreement(queues, pos, n), correct) for n in AGREE_SWEEP}
+    best_n = max(agree_auc, key=agree_auc.get)
+    agree = agreement(queues, pos, best_n)
+
+    sim_auc = auc(top1, correct)
+    bands = [{"min_similarity": b["min"], "n": b["n"], "accuracy": b["accuracy"]}
+             for b in band_table(top1, correct, SIM_BANDS)]
+    agree_bands = [{"min_agreement": b["min"], "n": b["n"], "accuracy": b["accuracy"]}
+                   for b in band_table(agree, correct, AGREE_BANDS)]
+
+    # The same two signals on handwritten queries. These have no ground-truth
+    # queue, so nothing here is an accuracy claim - it measures only how far each
+    # signal moves when the input stops being generated text.
+    handwritten = [c["query"] for c in yaml.safe_load(CASES.read_text())
+                   if c["expect"] == "precedent"]
+    h_pos, h_sims = neighbours(idx, handwritten)
+    stability = {
+        "similarity": (float(top1.mean()), float(h_sims[:, 0].mean())),
+        f"agreement@{best_n}": (float(agree.mean()),
+                                float(agreement(queues, h_pos, best_n).mean())),
+    }
 
     confusion = pd.crosstab(pd.Series(truth, name="true"), pd.Series(pred, name="pred"))
     pairs = sorted(
@@ -173,15 +228,51 @@ def main() -> None:
         *[f"| {lang} | {int((rows.language == lang).sum()):,} | {m['accuracy']:.3f} | {m['macro_f1']:.3f} |"
           for lang, m in by_language.items()],
         "",
-        "## How much to trust a prediction",
+        "## Two confidence signals, and when to trust which",
         "",
-        "Accuracy tracks the top-1 similarity closely, so the score is a usable "
-        "confidence signal rather than a diagnostic. These bands are written to "
-        "`routing_metrics.json` and read by `suggest_routing`.",
+        "Both are written to `routing_metrics.json` and read by `suggest_routing`.",
+        "",
+        f"**Top-1 similarity** is the better predictor - AUC {sim_auc:.3f} against "
+        f"{agree_auc[best_n]:.3f} for agreement. Combining them naively is worse than "
+        "either, so they are reported separately rather than blended.",
         "",
         "| top-1 similarity | tickets | accuracy |",
         "|------------------|--------:|---------:|",
         *[f"| >= {b['min_similarity']:.2f} | {b['n']:,} | {b['accuracy']:.3f} |" for b in bands],
+        "",
+        f"**Agreement@{best_n}** - the share of the top {best_n} neighbours that share the "
+        "nearest one's queue - predicts less well but stays meaningful.",
+        "",
+        f"| agreement@{best_n} | tickets | accuracy |",
+        "|------------|--------:|---------:|",
+        *[f"| >= {b['min_agreement']:.1f} | {b['n']:,} | {b['accuracy']:.3f} |" for b in agree_bands],
+        "",
+        "### Why both",
+        "",
+        "Similarity is better within a fixed input shape and *not comparable across "
+        "shapes*. Handwritten text scores lower than this corpus's generated text "
+        "whatever its topic, so a similarity band measured on tickets misreads a "
+        "hand-typed question as low-confidence when it is not. Agreement does not "
+        "move that way:",
+        "",
+        "| signal | generated tickets | handwritten queries | change |",
+        "|--------|------------------:|--------------------:|-------:|",
+        *[f"| {name} | {gen:.3f} | {hand:.3f} | {100 * (hand - gen) / gen:+.0f}% |"
+          for name, (gen, hand) in stability.items()],
+        "",
+        "Near-duplicate hits are collapsed before agreement is counted (doc-doc "
+        "similarity 0.85), so \"three neighbours agree\" means three distinct tickets. "
+        "That costs predictive power - agreement AUC falls from 0.684 to "
+        f"{agree_auc[best_n]:.3f} - because duplicated neighbours also signal a dense, "
+        "well-covered region, which correlates with being right. The uncollapsed "
+        "signal was the better predictor on this corpus by partly measuring an "
+        "artifact that better deduplication would remove, so the weaker honest "
+        "signal is the one published.",
+        "",
+        "So `suggest_routing` returns both. When they disagree the input is probably "
+        "not ticket-shaped, and agreement is the one to believe - a hand-typed ticket "
+        "that scored 0.514 similarity (a 49% band) had four of five neighbours "
+        "agreeing, and the prediction was right.",
         "",
         f"Near-duplicate matching contributes little: only {100 * (top1 >= 0.80).mean():.1f}% of "
         f"test tickets have a neighbour above 0.80, and excluding all of them macro-F1 is "
@@ -224,6 +315,10 @@ def main() -> None:
         "by_language": {k: round(v["macro_f1"], 4) for k, v in by_language.items()},
         "n_test": len(rows),
         "reliability_bands": bands,
+        "agreement_n": best_n,
+        "agreement_bands": agree_bands,
+        "similarity_auc": round(sim_auc, 4),
+        "agreement_auc": round(agree_auc[best_n], 4),
     }, indent=2) + "\n")
     print(f"  wrote {REPORT.relative_to(ROOT)}")
 

@@ -20,9 +20,47 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "pipeline"))
-from embedding import center, document_text, embed_query  # noqa: E402
+from embedding import center, embed_query  # noqa: E402
 
-META_COLUMNS = ["ticket_id", "queue", "priority", "type", "language", "subject", "body", "answer"]
+NEAR_DUPLICATE = 0.85
+"""Doc-doc similarity above which two hits are the same ticket reworded.
+
+The corpus contains paraphrase pairs that exact-body dedup cannot catch. A known
+pair measures 0.874; the 90th percentile of similarity between a query's top-10
+hits is 0.812. 0.85 is the highest cut that still catches the known pair, and it
+removes about one hit in five.
+
+This matters twice. It stops k=5 returning three distinct precedents, and it stops
+neighbour agreement counting one ticket twice - agreement reads as corroboration,
+so a duplicated neighbour inflates it with evidence that is not there.
+"""
+
+
+def collapse_duplicates(positions: np.ndarray, vectors: np.ndarray,
+                        keep: int, threshold: float = NEAR_DUPLICATE) -> np.ndarray:
+    """Greedily keep hits that are not near-duplicates of an already-kept hit.
+
+    Always returns exactly `keep` entries (or every input, if there are fewer):
+    if collapsing leaves too few, the best-ranked rejects are appended back so the
+    caller's array shape is predictable.
+    """
+    chosen, rejected = [0], []
+    for i in range(1, len(positions)):
+        if len(chosen) >= keep:
+            rejected.append(i)
+        elif all(float(vectors[positions[i]] @ vectors[positions[j]]) < threshold
+                 for j in chosen):
+            chosen.append(i)
+        else:
+            rejected.append(i)
+    if len(chosen) < keep:
+        chosen += rejected[: keep - len(chosen)]
+        chosen.sort()
+    return positions[chosen[:keep]]
+
+
+META_COLUMNS = ["ticket_id", "queue", "priority", "type", "language", "subject",
+                "body", "answer", "reply_state"]
 
 
 class Index:
@@ -40,14 +78,17 @@ class Index:
         # guessed here. Without that file we fall back to k=1 (the measured
         # optimum) and report no calibration rather than inventing one.
         self.vote_k = 1
+        self.agreement_n = 3
         self.bands: list[dict] = []
+        self.agreement_bands: list[dict] = []
         if routing_metrics_path is not None and routing_metrics_path.exists():
             metrics = json.loads(routing_metrics_path.read_text())
             self.vote_k = int(metrics.get("k", 1))
-            self.bands = sorted(
-                metrics.get("reliability_bands", []),
-                key=lambda b: -b["min_similarity"],
-            )
+            self.agreement_n = int(metrics.get("agreement_n", 3))
+            self.bands = sorted(metrics.get("reliability_bands", []),
+                                key=lambda b: -b["min_similarity"])
+            self.agreement_bands = sorted(metrics.get("agreement_bands", []),
+                                          key=lambda b: -b["min_agreement"])
 
         rows = con.execute(f"SELECT {', '.join(META_COLUMNS)} FROM tickets").df()
         self.meta = rows.set_index("ticket_id").reindex(self.ticket_id).reset_index()
@@ -77,9 +118,12 @@ class Index:
                 return [], float("nan")
             sims = np.where(mask, sims, -np.inf)
 
-        k = min(k, int(np.isfinite(sims).sum()))
-        order = np.argpartition(-sims, k - 1)[:k] if k < len(sims) else np.arange(len(sims))
+        # Over-fetch, then collapse near-duplicates down to k.
+        available = int(np.isfinite(sims).sum())
+        wide = min(max(k * 4, k), available)
+        order = np.argpartition(-sims, wide - 1)[:wide] if wide < len(sims) else np.arange(len(sims))
         order = order[np.argsort(-sims[order])]
+        order = collapse_duplicates(order, self.vectors, keep=k)
 
         hits = []
         for position in order:
@@ -94,16 +138,20 @@ class Index:
                 "subject": None if pd.isna(row.subject) else row.subject,
                 "body": row.body,
                 "answer": row.answer,
+                "reply_state": None if pd.isna(row.reply_state) else row.reply_state,
             })
         return hits, (hits[0]["similarity"] if hits else float("nan"))
-
-    def top1(self, text: str) -> float:
-        return float((self.vectors @ self.embed(text)).max())
 
     def expected_accuracy(self, similarity: float) -> float | None:
         """Measured routing accuracy for predictions at this similarity."""
         for band in self.bands:
             if similarity >= band["min_similarity"]:
+                return band["accuracy"]
+        return None
+
+    def expected_accuracy_from_agreement(self, share: float) -> float | None:
+        for band in self.agreement_bands:
+            if share >= band["min_agreement"]:
                 return band["accuracy"]
         return None
 
@@ -117,11 +165,13 @@ class Index:
         because a larger neighbourhood floods the small queues with the majority
         class).
         """
-        hits, top = self.search(text, max(show_k, self.vote_k))
+        hits, top = self.search(text, max(show_k, self.vote_k, self.agreement_n))
         if not hits:
             return {"queue": None, "priority": None, "neighbours": []}
 
         voters = hits[: self.vote_k]
+        nearest = hits[: self.agreement_n]
+        share = sum(h["queue"] == nearest[0]["queue"] for h in nearest) / len(nearest)
 
         def vote(field: str) -> tuple[str, float]:
             weights: dict[str, float] = {}
@@ -131,16 +181,59 @@ class Index:
             winner = max(weights, key=weights.get)
             return winner, weights[winner] / total
 
-        queue, queue_share = vote("queue")
-        priority, priority_share = vote("priority")
+        queue, _ = vote("queue")
+        priority, _ = vote("priority")
+        by_similarity = self.expected_accuracy(top)
+        by_agreement = self.expected_accuracy_from_agreement(share)
+
+        # Three states, checked in order.
+        #
+        # Both confidence figures were measured on inputs that have a real
+        # neighbourhood. Below the abstention floor there is none, and agreement
+        # becomes actively misleading - it ignores the base rate, so three
+        # neighbours from Technical Support (29% of the corpus) "agree" on a query
+        # with no content in it. The floor is the gate; the two signals only refine
+        # what sits above it.
+        #
+        # Above the floor, similarity is the better predictor but is not comparable
+        # across input shapes: handwritten text scores ~26% lower than this corpus's
+        # generated text whatever its topic, while agreement barely moves. So a wide
+        # gap between them says more about the input than about the prediction.
+        guidance = None
+        if top < self.floor:
+            by_similarity = by_agreement = None
+            guidance = (
+                f"The nearest ticket scores {top:.3f}, below the {self.floor} abstention "
+                "floor - there is no usable neighbourhood here, so neither confidence "
+                "figure applies and both are withheld. Route this to a human. Note that "
+                "neighbours can still appear to agree at this range: agreement ignores "
+                "how common a queue is, and the largest queue is 29% of the corpus."
+            )
+        elif by_similarity is not None and by_agreement is not None:
+            if by_agreement - by_similarity > 0.15:
+                guidance = (
+                    f"The two signals disagree ({by_similarity:.2f} by similarity, "
+                    f"{by_agreement:.2f} by agreement). That gap usually means the input "
+                    "is not ticket-shaped - a hand-typed question rather than a real "
+                    "ticket - which depresses similarity without affecting agreement. "
+                    "Trust the agreement figure here."
+                )
+            elif by_similarity - by_agreement > 0.15:
+                guidance = (
+                    f"Close nearest match ({top:.3f}) but the neighbours disagree "
+                    f"({share:.0%} share a queue). The ticket sits between queues; treat "
+                    f"{by_agreement:.2f} as the honest number and check the neighbours."
+                )
+
         return {
             "queue": queue,
             "priority": priority,
             "top_similarity": round(top, 3),
-            "expected_accuracy": self.expected_accuracy(top),
+            "expected_accuracy": by_similarity,
+            "neighbour_agreement": round(share, 3),
+            "expected_accuracy_by_agreement": by_agreement,
+            "guidance": guidance,
             "voted_over": self.vote_k,
-            "vote_share": round(queue_share, 3),
-            "priority_vote_share": round(priority_share, 3),
             "neighbours": [
                 {"ticket_id": h["ticket_id"], "queue": h["queue"],
                  "priority": h["priority"], "similarity": h["similarity"],
@@ -148,8 +241,3 @@ class Index:
                 for i, h in enumerate(hits)
             ],
         }
-
-
-def query_text(subject, body) -> str:
-    """Build the query string the same way the index built its documents."""
-    return document_text(subject, body)
