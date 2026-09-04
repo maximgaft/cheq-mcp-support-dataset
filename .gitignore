@@ -12,3 +12,4 @@ wheels/
 data/*.csv
 data/interim/
 data/.cache/
+.DS_Store
