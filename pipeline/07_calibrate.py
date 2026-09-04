@@ -65,6 +65,7 @@ def main() -> None:
     val = val[val.split.eq("val")].sample(N_REAL, random_state=SEED)
     real = np.array([top1(document_text(r.subject, r.body)) for _, r in val.iterrows()])
 
+    greeting = top1("Dear Customer Support Team, I hope this message finds you well.")
     ceiling = float(negative.max())
     p5 = float(np.percentile(real, 5))
     floor = round(float((ceiling + p5) / 2), 2)
@@ -131,7 +132,8 @@ def main() -> None:
         "",
         "A related symptom: a bare corpus greeting with no content in it at all "
         '("Dear Customer Support Team, I hope this message finds you well.") scores '
-        "0.468 and clears the floor, because provenance alone carries it over the line.",
+        f"{greeting:.3f} - {'above' if greeting >= floor else 'just below'} the {floor:.2f} floor. "
+        "Provenance alone carries a content-free string that close to the line.",
         "",
         "## Caveats",
         "",

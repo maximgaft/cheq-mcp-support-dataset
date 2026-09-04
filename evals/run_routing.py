@@ -8,7 +8,7 @@ Macro-F1 rather than accuracy. The classes run 21:1, so predicting "Technical
 Support" for everything already scores 29% accuracy while being useless - macro-F1
 weights the small queues equally and does not reward that.
 
-Every metric is also reported per language, because 41% of the corpus is German
+Every metric is also reported per language, because 31% of the corpus is German
 and a collapse on one side would hide inside an average.
 """
 
@@ -43,11 +43,12 @@ K_SWEEP = [1, 2, 3, 5, 10, 25]
 CHUNK = 500
 
 
-def neighbours(idx: Index, texts: list[str]) -> tuple[np.ndarray, np.ndarray]:
-    """Top-TOP_N neighbour positions and similarities for each query."""
+def neighbours(idx: Index, texts: list[str]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Top-TOP_N neighbour positions and similarities for each query, plus the
+    uncollapsed positions so the cost of collapsing can be measured."""
     queries = center(embed_queries(texts, progress=True), idx.mean)
     wide = TOP_N * 4
-    positions, sims = [], []
+    positions, sims, raw = [], [], []
     for start in range(0, len(queries), CHUNK):
         block = queries[start : start + CHUNK] @ idx.vectors.T
         part = np.argpartition(-block, wide - 1, axis=1)[:, :wide]
@@ -60,7 +61,8 @@ def neighbours(idx: Index, texts: list[str]) -> tuple[np.ndarray, np.ndarray]:
         kept = np.vstack([collapse_duplicates(row, idx.vectors, keep=TOP_N) for row in part])
         positions.append(kept)
         sims.append(np.take_along_axis(block, kept, axis=1))
-    return np.vstack(positions), np.vstack(sims)
+        raw.append(part[:, :TOP_N])
+    return np.vstack(positions), np.vstack(sims), np.vstack(raw)
 
 
 def vote(labels: np.ndarray, positions: np.ndarray, sims: np.ndarray, k: int) -> np.ndarray:
@@ -139,13 +141,13 @@ def main() -> None:
         cached[split] = (rows, *neighbours(idx, texts))
 
     # --- k chosen on val ---
-    val_rows, val_pos, val_sims = cached["val"]
+    val_rows, val_pos, val_sims, _ = cached["val"]
     sweep = {k: scores(val_rows.queue.to_numpy(), vote(queues, val_pos, val_sims, k))["macro_f1"]
              for k in K_SWEEP}
     best_k = max(sweep, key=sweep.get)
 
     # --- reported on test ---
-    rows, pos, sims = cached["test"]
+    rows, pos, sims, pos_raw = cached["test"]
     truth = rows.queue.to_numpy()
     queue_result = scores(truth, vote(queues, pos, sims, best_k))
     priority_result = scores(rows.priority.to_numpy(), vote(priorities, pos, sims, best_k))
@@ -169,6 +171,7 @@ def main() -> None:
     agree_auc = {n: auc(agreement(queues, pos, n), correct) for n in AGREE_SWEEP}
     best_n = max(agree_auc, key=agree_auc.get)
     agree = agreement(queues, pos, best_n)
+    agree_auc_raw = auc(agreement(queues, pos_raw, best_n), correct)  # without collapsing
 
     sim_auc = auc(top1, correct)
     bands = [{"min_similarity": b["min"], "n": b["n"], "accuracy": b["accuracy"]}
@@ -181,7 +184,7 @@ def main() -> None:
     # signal moves when the input stops being generated text.
     handwritten = [c["query"] for c in yaml.safe_load(CASES.read_text())
                    if c["expect"] == "precedent"]
-    h_pos, h_sims = neighbours(idx, handwritten)
+    h_pos, h_sims, _ = neighbours(idx, handwritten)
     stability = {
         "similarity": (float(top1.mean()), float(h_sims[:, 0].mean())),
         f"agreement@{best_n}": (float(agree.mean()),
@@ -262,17 +265,14 @@ def main() -> None:
         "",
         "Near-duplicate hits are collapsed before agreement is counted (doc-doc "
         "similarity 0.85), so \"three neighbours agree\" means three distinct tickets. "
-        "That costs predictive power - agreement AUC falls from 0.684 to "
-        f"{agree_auc[best_n]:.3f} - because duplicated neighbours also signal a dense, "
-        "well-covered region, which correlates with being right. The uncollapsed "
-        "signal was the better predictor on this corpus by partly measuring an "
-        "artifact that better deduplication would remove, so the weaker honest "
-        "signal is the one published.",
+        f"Uncollapsed, agreement AUC is {agree_auc_raw:.3f}; collapsed, {agree_auc[best_n]:.3f}. "
+        "Duplicated neighbours also signal a dense, well-covered region, which correlates "
+        "with being right, so the uncollapsed signal can look like the better predictor "
+        "while partly measuring an artifact that better deduplication would remove. The "
+        "collapsed figure is the one published.",
         "",
         "So `suggest_routing` returns both. When they disagree the input is probably "
-        "not ticket-shaped, and agreement is the one to believe - a hand-typed ticket "
-        "that scored 0.514 similarity (a 49% band) had four of five neighbours "
-        "agreeing, and the prediction was right.",
+        "not ticket-shaped, and agreement is the one to believe.",
         "",
         f"Near-duplicate matching contributes little: only {100 * (top1 >= 0.80).mean():.1f}% of "
         f"test tickets have a neighbour above 0.80, and excluding all of them macro-F1 is "

@@ -1,9 +1,15 @@
 """Vector search over the ticket index, with the abstention decision attached.
 
-Search is a brute-force dot product against 31,795 x 384 centred vectors - about
-15 million floating-point operations, well under a millisecond. No approximate
-index, so no recall loss to confound the retrieval numbers, and no vector
-database to run.
+Search is a brute-force dot product against 31,625 x 384 centred vectors: one BLAS
+matrix-vector product, ~12M multiply-adds, measured at 0.43 ms and 2,300 queries
+a second. It stays under 10 ms out to about a million vectors.
+
+Exact, not approximate, and that matters more than the speed. An ANN index runs
+at 95-99% recall, so a few percent of the time it substitutes a worse neighbour.
+Harmless in most applications - but this project reports measured retrieval and
+routing numbers, and approximation would add a second error source that could not
+be separated from the first. Every number in reports/ is then attributable to the
+embeddings alone.
 
 Self-retrieval is structurally impossible rather than guarded against: the index
 holds only `split == "train"` tickets, so a val or test ticket used as a query
@@ -20,7 +26,7 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "pipeline"))
-from embedding import center, embed_query  # noqa: E402
+from pipeline.embedding import center, embed_query  # noqa: E402
 
 NEAR_DUPLICATE = 0.85
 """Doc-doc similarity above which two hits are the same ticket reworded.
@@ -161,7 +167,7 @@ class Index:
         The vote uses self.vote_k, which evals/run_routing.py chose on the val
         split. show_k only controls how many neighbours come back for inspection -
         widening it would not change the prediction, and widening the *vote*
-        measurably degrades it (macro-F1 0.691 at k=1 falls to 0.313 at k=25,
+        measurably degrades it (val macro-F1 0.708 at k=1 falls to 0.297 at k=25,
         because a larger neighbourhood floods the small queues with the majority
         class).
         """
@@ -196,8 +202,8 @@ class Index:
         # what sits above it.
         #
         # Above the floor, similarity is the better predictor but is not comparable
-        # across input shapes: handwritten text scores ~26% lower than this corpus's
-        # generated text whatever its topic, while agreement barely moves. So a wide
+        # across input shapes: handwritten text scores ~28% lower than this corpus's
+        # generated text whatever its topic, while agreement does not fall. So a wide
         # gap between them says more about the input than about the prediction.
         guidance = None
         if top < self.floor:

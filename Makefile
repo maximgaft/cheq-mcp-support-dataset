@@ -5,8 +5,8 @@ STAGES := 01_load 02_clean 03_filter 04_dedup 05_split 06_embed 07_calibrate 08_
 .PHONY: label help fetch build eval serve check all
 help:
 	@echo "make fetch   download the three source CSVs (checksummed)"
-	@echo "make build   run the 8-stage pipeline  -> data/interim/  (~90s)"
-	@echo "make eval    routing eval              -> reports/       (~27s)"
+	@echo "make build   run the 8-stage pipeline  -> data/interim/  (~80s)"
+	@echo "make eval    routing eval + label agreement -> reports/  (~30s)"
 	@echo "make serve   run the MCP server on stdio"
 	@echo "make check   lint"
 	@echo "make all     fetch + build + eval"
@@ -19,6 +19,7 @@ build: fetch
 
 eval:
 	@$(UV) evals/run_routing.py
+	@$(UV) evals/check_labels.py
 
 serve:
 	@$(UV) -m server
