@@ -1,6 +1,6 @@
 # Support-ticket MCP server
 
-An MCP server that answers natural-language questions about 40,064 bilingual
+An MCP server that answers natural-language questions about 40,047 bilingual
 (English/German) customer-support tickets — and refuses the ones the data cannot
 answer.
 
@@ -23,12 +23,12 @@ The reasoning behind the design is one page: **[docs/design.pdf](docs/design.pdf
 ```bash
 git clone <this repo> && cd cheq
 uv sync          # installs deps (~1 GB: torch)
-make build       # fetch data + build the index (~2 min first run, ~90s after)
-make eval        # routing + label agreement (~27s)
+make build       # fetch data + build the index (~2 min first run, ~80s after)
+make eval        # routing + label agreement (~30s)
 ```
 
 The build is deterministic: a fresh clone reproduces the published numbers
-exactly — 0.691 macro-F1, 0.758 English / 0.590 German, abstention floor 0.46.
+exactly — 0.707 macro-F1, 0.782 English / 0.542 German, abstention floor 0.47.
 
 Then point your MCP client at it — see below — and ask it something.
 
@@ -43,7 +43,8 @@ Then point your MCP client at it — see below — and ask it something.
 - No API key, no network at query time, no database server, no vector database
 
 Dependencies are pinned in `uv.lock`: `duckdb`, `mcp`, `numpy`, `pandas`,
-`pyarrow`, `pyyaml`, `sentence-transformers`, `torch`, `ruff`.
+`pyarrow`, `pyyaml`, `sentence-transformers`, `torch`, `ruff`, and `anthropic` for the
+optional labelling pass.
 
 ## Environment variables
 
@@ -111,8 +112,8 @@ Ask your client these, in roughly this order:
 ## What it does with the data
 
 ```
-3 source CSVs ──► 8 pipeline stages ──► DuckDB + 31,795-vector index
-  61,765 rows        ~90s, deterministic     40,064 tickets, 10 queues
+3 source CSVs ──► 8 pipeline stages ──► DuckDB + 31,625-vector index
+  61,765 rows        ~80s, deterministic     40,047 tickets, 10 queues
 ```
 
 The stages are numbered and each prints a reconciliation, so you can run one at a
@@ -125,15 +126,21 @@ uv run python pipeline/03_filter.py
 Notable: duplicates are removed **before** the train/test split (~28% of a naive
 test set would otherwise have its exact twin in training), and the DuckDB schema
 deliberately omits the positional `tag_1..tag_8` columns so that a wrong
-`GROUP BY` is unwritable rather than merely discouraged.
+`GROUP BY` is unwritable rather than merely discouraged. The source's own language
+label is wrong on 10% of rows — 4,204 tickets marked German whose text is English —
+so `language` is re-detected from the text and the original kept as
+`language_label`. Tag spellings are folded (`Data Breach` / `Data breach`,
+`access control` / `access_control`) and the 62 cells that held a comma-joined
+list are split, so `GROUP BY tag` counts one tag once.
 
 ## Evaluation
 
-`make eval` runs offline in ~27s and writes [`reports/routing.md`](reports/routing.md).
+`make eval` runs offline in ~30s and writes [`reports/routing.md`](reports/routing.md)
+and [`reports/labels.md`](reports/labels.md).
 
-- **Routing: 0.691 macro-F1** across 10 queues, against a 0.045 majority-class baseline
-  (English 0.758, German 0.590)
-- **Abstention:** accepts 97.5% of real tickets, rejects 100% of 20 off-topic queries
+- **Routing: 0.707 macro-F1** across 10 queues, against a 0.045 majority-class baseline
+  (English 0.782, German 0.542)
+- **Abstention:** accepts 97.8% of real tickets, rejects 100% of 20 off-topic queries
   — see [`reports/calibration.md`](reports/calibration.md)
 
 Every threshold the server uses is derived by these scripts and written to
@@ -147,7 +154,7 @@ reported on a held-out test split.
 pipeline/   8 numbered stages + embedding.py (shared with the server)
 server/     __main__.py (tools) · db.py (SQL guard) · retrieval.py (vector search)
 evals/      run_routing.py · abstention_queries.yaml · answer_labels.yaml
-reports/    generated: calibration.md · routing.md
+reports/    generated: calibration.md · routing.md · labels.md
 docs/       design.pdf — the one-page design note
 ```
 
@@ -165,6 +172,6 @@ docs/       design.pdf — the one-page design note
 - The four-way `answer_kind` label agrees with hand adjudication only **70%**; only
   the collapsed `reply_state` should be quoted. `reports/labels.md` says why.
 - Hand-typed questions score lower than real tickets regardless of topic, so
-  `mode="precedent"` wrongly refuses about a quarter of legitimate typed queries.
+  `mode="precedent"` wrongly refuses about 40% of legitimate typed queries.
   Use `mode="explore"` for those. The measurement is in `reports/calibration.md`.
-- German routing trails English by 0.17 macro-F1.
+- German routing trails English by 0.24 macro-F1.
