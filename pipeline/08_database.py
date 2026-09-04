@@ -33,8 +33,8 @@ OUT = DATA / "interim" / "08_tickets.duckdb"
 LABELS = DATA / "answer_labels.parquet"
 
 COLUMNS = [
-    "ticket_id", "source", "split", "language", "queue", "priority", "type",
-    "subject", "body", "answer", "body_words", "is_indexable",
+    "ticket_id", "source", "split", "language", "language_label", "queue", "priority",
+    "type", "subject", "body", "answer", "body_words", "is_indexable",
 ]
 # answer_kind and ask_is_specific come from pipeline/label.py, which needs an API
 # key. The columns are created either way so the schema does not change shape
@@ -43,6 +43,12 @@ LABEL_COLUMNS = ["answer_kind", "ask_is_specific"]
 # reply_state collapses those two into the distinction the business claim uses.
 # Derived here so no consumer re-implements the rule and gets it subtly wrong.
 TAG_SLOTS = [f"tag_{i}" for i in range(1, 9)]
+
+
+def canonical(spellings: pd.Series) -> str:
+    """The most common spelling in a group of variants; ties go alphabetically."""
+    counts = spellings.value_counts()
+    return sorted(counts[counts == counts.max()].index)[0]
 
 
 def main() -> None:
@@ -64,10 +70,21 @@ def main() -> None:
     tags = (
         corpus.melt(id_vars="ticket_id", value_vars=TAG_SLOTS, value_name="tag")[["ticket_id", "tag"]]
         .dropna(subset=["tag"])
-        .query("tag.str.strip() != ''")
-        .drop_duplicates()  # 68 rows repeat a tag across slots; one assignment each
-        .sort_values(["ticket_id", "tag"])
+        .assign(tag=lambda d: d.tag.str.split(","))  # 62 cells hold a comma-joined list of tags
+        .explode("tag")
+        .assign(tag=lambda d: d.tag.str.strip())
+        .query("tag != ''")
+        .reset_index(drop=True)
     )
+    # Fold spelling variants onto one key - "access control" / "accesscontrol" /
+    # "access-control" / "access_control", "API" / "Api" - and show each group as its
+    # most common original spelling. Otherwise GROUP BY tag splits one tag across
+    # its spellings: 173 separator groups and 27 case groups in the source.
+    spellings = tags.tag.nunique()
+    key = tags.tag.str.lower().str.replace(r"[\s\-_]+", "", regex=True)
+    tags["tag"] = key.map(tags.tag.groupby(key).agg(canonical))
+    tags = tags.drop_duplicates().sort_values(["ticket_id", "tag"])  # same tag twice on one ticket
+    print(f"  tags: {spellings:,} distinct spellings -> {tags.tag.nunique():,} tags after folding")
 
     OUT.unlink(missing_ok=True)
     con = duckdb.connect(str(OUT))

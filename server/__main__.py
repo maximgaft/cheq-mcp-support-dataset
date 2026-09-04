@@ -41,15 +41,24 @@ CANNOT_ANSWER = [
 
 SCHEMA_NOTES = [
     "ticket_tags holds one row per (ticket, tag). Joining it multiplies ticket "
-    "rows, so count tickets with count(DISTINCT ticket_id), never count(*).",
+    "rows, so count tickets with count(DISTINCT ticket_id), never count(*). Tag "
+    "spellings are folded (case and separators normalised, each shown in its most "
+    "common spelling) and cells that held a comma-joined list are split, so GROUP BY "
+    "tag counts one tag once.",
     "There are deliberately no tag_1..tag_8 columns. The source stores tags "
     "positionally, so the same tag appears in different slots on different rows "
     "and GROUP BY tag_1 returns a confidently wrong answer. Use ticket_tags.",
-    "is_indexable marks tickets usable as retrieval precedent: they have an "
-    "answer and a body of at least 5 words. Non-indexable tickets are still real "
-    "tickets and still count in every aggregate.",
+    "is_indexable marks tickets usable as retrieval precedent: body and answer "
+    "both at least 5 words, and the answer in the same language as the body. "
+    "Non-indexable tickets are still real tickets and still count in every aggregate.",
     "split is train/val/test. Only train tickets are in the retrieval index; "
     "val and test exist so retrieval and routing can be measured on unseen data.",
+    "language is detected from the ticket text (body first, answer if the body is "
+    "too short to tell). language_label is what the source dataset said, and it is "
+    "wrong on about 10% of rows - 4,204 tickets labelled de whose text is English. "
+    "Tickets in a third language were dropped. Filter and group by language; "
+    "language_label exists only so the defect can be measured "
+    "(WHERE language != language_label).",
     "The corpus is synthetic, generated for classifier training. It demonstrates "
     "mechanism; it is not evidence about real customers.",
     "reply_state says whether the customer could act on that first reply alone: "
@@ -67,7 +76,7 @@ SCHEMA_NOTES = [
 mcp = MCPServer(
     name="cheq-tickets",
     instructions=(
-        "Customer-support ticket corpus: 40,064 bilingual (en/de) tickets across "
+        "Customer-support ticket corpus: 40,047 bilingual (en/de) tickets across "
         "10 queues. Call get_schema first - it lists the columns, the values each "
         "categorical column can take, and the questions this data cannot answer. "
         "Use run_sql for counts, mixes and distributions."
@@ -189,15 +198,14 @@ def find_similar_tickets(
     and it accepts 98% of them while rejecting every off-topic query tested.
 
     mode="explore" is the right mode for a question typed by a person, and the
-    reason is measured. Text written by a human scores about 0.16 lower than text
-    from this corpus's generator whatever its topic - which is about the same size
-    as the gap between on-topic and off-topic. A single similarity threshold
-    cannot separate those two effects, so on hand-typed questions the floor
-    wrongly rejects roughly a third of legitimate ones. Measured means: real
-    tickets 0.66, handwritten on-topic 0.50, handwritten off-topic 0.35. Details
-    in reports/calibration.md.
+    reason is measured. Text written by a human scores about 0.18 lower than text
+    from this corpus's generator whatever its topic - larger than the 0.13 gap
+    between on-topic and off-topic. A single similarity threshold cannot separate
+    those two effects, so on hand-typed questions the floor wrongly rejects about
+    40% of legitimate ones. Measured means: real tickets 0.67, handwritten
+    on-topic 0.49, handwritten off-topic 0.36. Details in reports/calibration.md.
 
-    Both modes search the same 31,795 indexed tickets; only the floor differs.
+    Both modes search the same 31,625 indexed tickets; only the floor differs.
 
     Every hit carries reply_state: whether that past reply resolved the ticket,
     named something the customer could fetch (actionable_ask), or was a dead end
@@ -206,7 +214,7 @@ def find_similar_tickets(
 
     Every hit includes the full original answer, so k is capped at 20 and defaults
     to 5. Similarity is on a centred scale where 0.0 means unrelated - values
-    around 0.6-0.9 are genuinely similar, and the floor sits at 0.45.
+    around 0.6-0.9 are genuinely similar, and the floor sits at 0.47.
     """
     idx = index()
     if mode not in ("precedent", "explore"):
@@ -232,17 +240,18 @@ def suggest_routing(text: str) -> dict:
     """Predict which queue and priority a ticket belongs to, with how much to
     trust the prediction, and the neighbours it came from.
 
-    Two confidence figures come back, both measured on 4,008 held-out tickets,
+    Two confidence figures come back, both measured on 4,004 held-out tickets,
     and reading them together is the point.
 
     expected_accuracy comes from top_similarity: above 0.80 predictions were right
-    98.5% of the time, below 0.60 only 49%. It is the sharper signal (AUC 0.744)
+    96.7% of the time, below 0.60 only 48%. It is the sharper signal (AUC 0.753)
     but it is only comparable within one input shape - handwritten text scores
-    about 26% lower than this corpus's generated text whatever its topic.
+    about 28% lower than this corpus's generated text whatever its topic.
 
     expected_accuracy_by_agreement comes from how many of the nearest neighbours
-    share a queue. Weaker (AUC 0.651) but it barely moves between generated and
-    handwritten input, so it survives the effect that breaks the other one.
+    share a queue. Weaker (AUC 0.625), but it does not fall on handwritten input -
+    similarity drops 28%, agreement does not drop - so it does not inherit the
+    false low-confidence of the other one.
 
     When they diverge a `guidance` string explains which to believe. A large gap
     with agreement higher usually means the input is a typed question rather than
@@ -255,8 +264,8 @@ def suggest_routing(text: str) -> dict:
     degrades it sharply, since a larger neighbourhood floods the small queues
     with the majority class.
 
-    Overall: 0.697 macro-F1 across 10 queues against a 0.045 majority baseline,
-    but 0.767 on English and 0.590 on German. Weight German predictions
+    Overall: 0.707 macro-F1 across 10 queues against a 0.045 majority baseline,
+    but 0.782 on English and 0.542 on German. Weight German predictions
     accordingly. Full breakdown in reports/routing.md.
     """
     return index().route(text)
