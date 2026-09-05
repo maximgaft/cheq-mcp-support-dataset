@@ -214,6 +214,8 @@ conversation against the live server, and writes
 [reports/host_eval.md](reports/host_eval.md) with the model that served each
 answer, the tools it called, the SQL it wrote, and a deterministic pass/fail.
 It is the check that the natural-language promise holds, not just the tools.
+Claude Opus 5 answered 22 of 22 graded questions correctly, refusing the three
+unanswerable ones up front and naming the missing data each time.
 
 ## Tests
 
