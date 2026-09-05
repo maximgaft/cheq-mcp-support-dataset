@@ -117,9 +117,9 @@ def main() -> None:
         f"hand-typed question it wrongly rejects **{100 * false_reject:.0f}%** of "
         f"legitimate on-topic ones.",
         "",
-        '`find_similar_tickets` therefore documents that `mode="precedent"` expects '
-        'ticket text, and offers `mode="explore"`, which applies no floor, for queries '
-        "typed by a person.",
+        "`find_similar_tickets` therefore applies the floor to `has_precedent` but returns "
+        "the hits either way, and its guidance says that for a question typed by a person "
+        "the floor is advisory rather than a refusal.",
         "",
         f"**The two populations genuinely overlap**, so no floor satisfies both: accepting "
         f"every on-topic query needs a floor at or below {positive.min():.3f}, and rejecting "

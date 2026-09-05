@@ -29,7 +29,7 @@ The floor does separate topic: handwritten on-topic queries score +0.134 above h
 
 So the floor is right for the input shape it was calibrated on, and wrong for any other. On real tickets - the production shape, where a webhook delivers an actual ticket - it accepts 98% and rejects 100% of off-topic queries. Applied to a hand-typed question it wrongly rejects **40%** of legitimate on-topic ones.
 
-`find_similar_tickets` therefore documents that `mode="precedent"` expects ticket text, and offers `mode="explore"`, which applies no floor, for queries typed by a person.
+`find_similar_tickets` therefore applies the floor to `has_precedent` but returns the hits either way, and its guidance says that for a question typed by a person the floor is advisory rather than a refusal.
 
 **The two populations genuinely overlap**, so no floor satisfies both: accepting every on-topic query needs a floor at or below 0.379, and rejecting every off-topic one needs it above 0.441. 0.40 is the visible alternative - it accepts 100% of both legitimate populations and lets through 1 of 20 off-topic queries. 0.47 is the conservative end of that trade, chosen because a confidently wrong draft costs more than a refusal. Which end to sit at is a decision for whoever owns the support queue, not a property of the data.
 

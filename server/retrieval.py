@@ -28,6 +28,11 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "pipeline"))
 from pipeline.embedding import center, embed_query  # noqa: E402
 
+GUIDANCE_GAP = 0.15
+"""Difference between the two fitted confidence figures above which route()
+adds a guidance string. Rendered into the suggest_routing description too, so
+the text a model reads cannot drift from the rule."""
+
 NEAR_DUPLICATE = 0.85
 """Doc-doc similarity above which two hits are the same ticket reworded.
 
@@ -218,7 +223,7 @@ class Index:
                 "how common a queue is, and the largest queue is 29% of the corpus."
             )
         elif (by_similarity is not None and by_agreement is not None
-              and abs(by_similarity - by_agreement) > 0.15):
+              and abs(by_similarity - by_agreement) > GUIDANCE_GAP):
             guidance = (
                 f"The two confidence figures differ ({by_similarity:.2f} by similarity, "
                 f"{by_agreement:.2f} by agreement). That is common on real tickets and "

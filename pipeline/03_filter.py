@@ -20,7 +20,8 @@ Three different decisions, kept apart on purpose:
           3 hits before it counts.
 
 german_norm goes to its own file rather than the corpus. It is a different
-dataset that happens to share three column names: no answers, no type, no tags,
+dataset that shares five column names (subject, body, queue, priority, language)
+and nothing else: no answers, no type, no tags,
 a 42-value queue taxonomy instead of 10, a 5-value priority scale instead of 3,
 and 100% German. It can join neither the analytical nor the precedent story.
 
