@@ -2,13 +2,14 @@
 UV := uv run python
 STAGES := 01_load 02_clean 03_filter 04_dedup 05_split 06_embed 07_calibrate 08_database
 
-.PHONY: label help fetch build eval test smoke serve check all
+.PHONY: label help fetch build eval test smoke host-eval serve check all
 help:
 	@echo "make fetch   download the three source CSVs, checksummed (pipeline/00_fetch.py)"
 	@echo "make build   run the 8-stage pipeline  -> data/interim/  (~80s)"
 	@echo "make eval    routing eval, label agreement, question set, MCP smoke -> reports/  (~30s)"
 	@echo "make test    unit tests: SQL guard, retrieval rules, pipeline functions (~2s)"
 	@echo "make smoke   start the server over stdio, call every tool -> reports/smoke.md"
+	@echo "make host-eval  a real model answers the question set through the tools -> reports/host_eval.md (needs ANTHROPIC_API_KEY)"
 	@echo "make serve   run the MCP server on stdio"
 	@echo "make check   lint"
 	@echo "make all     fetch + build + eval"
@@ -30,6 +31,9 @@ test:
 
 smoke:
 	@$(UV) evals/smoke.py
+
+host-eval:  ## needs ANTHROPIC_API_KEY; CHEQ_HOST_MODEL overrides the model
+	@$(UV) evals/host_eval.py
 
 serve:
 	@$(UV) -m server
