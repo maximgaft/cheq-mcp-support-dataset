@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from pathlib import Path
 
 from mcp.server.mcpserver import MCPServer
@@ -217,30 +218,37 @@ mcp = MCPServer(name="cheq-tickets", instructions=_instructions())
 
 _con = None
 _index = None
+# MCP runs synchronous tools in worker threads, so two first calls can race to
+# build these. One re-entrant lock covers both; index() calls connection().
+_lock = threading.RLock()
 
 
 def connection():
+    """The root DuckDB connection. Callers take a cursor from it per call -
+    see server/db.py - rather than executing on it directly."""
     global _con
-    if _con is None:
-        if not DB_PATH.exists():
-            raise FileNotFoundError(
-                f"{DB_PATH} not found. Run `make build` first (fetch + 8 pipeline stages, ~2 min)."
-            )
-        _con = db.connect(DB_PATH)
-    return _con
+    with _lock:
+        if _con is None:
+            if not DB_PATH.exists():
+                raise FileNotFoundError(
+                    f"{DB_PATH} not found. Run `make build` first (fetch + 8 pipeline stages, ~2 min)."
+                )
+            _con = db.connect(DB_PATH)
+        return _con
 
 
 def index() -> Index:
     """Loaded on first retrieval call - it pulls in the embedding model."""
     global _index
-    if _index is None:
-        for path in (INDEX_PATH, THRESHOLDS_PATH):
-            if not path.exists():
-                raise FileNotFoundError(
-                    f"{path} not found. Run `make build` first (fetch + 8 pipeline stages, ~2 min)."
-                )
-        _index = Index(INDEX_PATH, THRESHOLDS_PATH, connection(), ROUTING_METRICS_PATH)
-    return _index
+    with _lock:
+        if _index is None:
+            for path in (INDEX_PATH, THRESHOLDS_PATH):
+                if not path.exists():
+                    raise FileNotFoundError(
+                        f"{path} not found. Run `make build` first (fetch + 8 pipeline stages, ~2 min)."
+                    )
+            _index = Index(INDEX_PATH, THRESHOLDS_PATH, connection(), ROUTING_METRICS_PATH)
+        return _index
 
 
 def _empty(text: str) -> dict | None:
@@ -252,29 +260,29 @@ def _empty(text: str) -> dict | None:
 @mcp.tool(description=_schema_description())
 def get_schema() -> dict:
     """Tables, facets, provenance, notes, and the cannot_answer list."""
-    con = connection()
-    tables = {}
-    for table in ("tickets", "ticket_tags"):
-        columns = [
-            {"name": name, "type": dtype}
-            for name, dtype, *_ in con.execute(f"DESCRIBE {table}").fetchall()
-        ]
-        count = con.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
-        tables[table] = {"rows": count, "columns": columns}
+    with connection().cursor() as cur:
+        tables = {}
+        for table in ("tickets", "ticket_tags"):
+            columns = [
+                {"name": name, "type": dtype}
+                for name, dtype, *_ in cur.execute(f"DESCRIBE {table}").fetchall()
+            ]
+            count = cur.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+            tables[table] = {"rows": count, "columns": columns}
 
-    facets = {
-        column: [
-            {"value": value, "tickets": n}
-            for value, n in con.execute(
-                f"SELECT {column}, count(*) FROM tickets GROUP BY 1 ORDER BY 2 DESC"
-            ).fetchall()
-        ]
-        for column in FACET_COLUMNS
-    }
-    top_tags = con.execute(
-        "SELECT tag, count(*) AS n FROM ticket_tags GROUP BY 1 ORDER BY 2 DESC LIMIT 20"
-    ).fetchall()
-    distinct_tags = con.execute("SELECT count(DISTINCT tag) FROM ticket_tags").fetchone()[0]
+        facets = {
+            column: [
+                {"value": value, "tickets": n}
+                for value, n in cur.execute(
+                    f"SELECT {column}, count(*) FROM tickets GROUP BY 1 ORDER BY 2 DESC"
+                ).fetchall()
+            ]
+            for column in FACET_COLUMNS
+        }
+        top_tags = cur.execute(
+            "SELECT tag, count(*) AS n FROM ticket_tags GROUP BY 1 ORDER BY 2 DESC LIMIT 20"
+        ).fetchall()
+        distinct_tags = cur.execute("SELECT count(DISTINCT tag) FROM ticket_tags").fetchone()[0]
 
     return {
         "tables": tables,

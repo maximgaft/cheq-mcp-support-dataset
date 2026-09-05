@@ -1,13 +1,14 @@
 """Read-only SQL access to the ticket database, and the guard around it.
 
-Four independent layers. None is sufficient alone, which is the point:
+Four independent layers keep a query from reading or changing anything outside
+the two tables. None is sufficient alone, which is the point:
 
   read_only=True            blocks DDL and DML. The config alone does not -
                             CREATE TABLE still succeeds with file access off.
   enable_external_access    blocks all file and network I/O, so read_csv,
     =False                  read_parquet, glob, COPY..TO and ATTACH cannot
                             reach the disk.
-  lock_configuration=True   blocks SET, so the layer above cannot be undone
+  lock_configuration=True   blocks SET, so the layers above cannot be undone
                             from inside a query.
   exactly one SELECT        blocks semicolon chaining. DuckDB executes both
                             halves of "SELECT 1; SELECT 2" in a single call,
@@ -19,10 +20,29 @@ attacks, so it needs extending for every DuckDB function that learns to touch a
 file, and it loses to name obfuscation. Disabling external access removes the
 capability instead, which covers functions that do not exist yet.
 
-Known residual: PRAGMA parses with statement type SELECT and therefore passes
-the statement check. Under a read-only connection with a locked configuration it
-can only report metadata - it returned the database path and build version in
-testing. Documented rather than papered over.
+Two more layers bound what a legitimate query can cost:
+
+  a cursor per call         MCP runs synchronous tools in worker threads, so two
+                            run_sql calls in one host turn execute concurrently.
+                            A DuckDB connection is not safe to share that way -
+                            in testing, two threads on one connection returned
+                            each other's rows with no error raised. cursor()
+                            opens a sibling connection that inherits read_only
+                            and the locked config; each call gets its own and
+                            closes it.
+  memory_limit, threads,    memory_limit caps buffer-managed work (sorts, joins,
+    10s watchdog            aggregates) and turns a runaway into an error the
+                            caller sees; threads keeps one query from taking the
+                            machine. Scalar allocations such as repeat() are not
+                            tracked by memory_limit and are bounded only by the
+                            watchdog, which interrupts the call's own cursor.
+
+Known residual: metadata is readable. PRAGMA parses with statement type SELECT,
+and duckdb_databases() / duckdb_settings() are plain SELECTs; they report the
+database file's absolute path, and a rejected duckdb_extensions() call echoes the
+extension directory in its error text. On a local stdio server that is the
+caller's own home directory. It would need redacting before the HTTP deployment
+the design note sketches. Documented rather than papered over.
 """
 
 from __future__ import annotations
@@ -32,7 +52,12 @@ from pathlib import Path
 
 import duckdb
 
-HARDENED = {"enable_external_access": False, "lock_configuration": True}
+HARDENED = {
+    "enable_external_access": False,
+    "lock_configuration": True,
+    "memory_limit": "1GB",
+    "threads": 2,
+}
 
 DEFAULT_MAX_ROWS = 100
 ROW_CEILING = 500
@@ -74,16 +99,18 @@ def _cell(value: object) -> object:
 
 
 def run(con: duckdb.DuckDBPyConnection, sql: str, max_rows: int = DEFAULT_MAX_ROWS) -> dict:
-    """Validate, execute under a timeout, and return a size-bounded result."""
+    """Validate, execute on a private cursor under a timeout, and return a
+    size-bounded result."""
     validate(sql)
     max_rows = max(1, min(int(max_rows), ROW_CEILING))
 
-    watchdog = threading.Timer(TIMEOUT_SECONDS, con.interrupt)
+    cur = con.cursor()
+    watchdog = threading.Timer(TIMEOUT_SECONDS, cur.interrupt)
     watchdog.start()
     try:
-        cursor = con.execute(sql)
-        columns = [d[0] for d in cursor.description]
-        fetched = cursor.fetchmany(max_rows + 1)  # one extra reveals "there is more"
+        cur.execute(sql)
+        columns = [d[0] for d in cur.description]
+        fetched = cur.fetchmany(max_rows + 1)  # one extra reveals "there is more"
     except duckdb.InterruptException as exc:
         raise SqlRejected(
             f"query ran longer than {TIMEOUT_SECONDS}s and was cancelled. "
@@ -93,6 +120,7 @@ def run(con: duckdb.DuckDBPyConnection, sql: str, max_rows: int = DEFAULT_MAX_RO
         raise SqlRejected(str(exc)) from exc
     finally:
         watchdog.cancel()
+        cur.close()
 
     rows: list[list] = []
     chars = 0
