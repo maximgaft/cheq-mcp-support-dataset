@@ -253,9 +253,11 @@ def suggest_routing(text: str) -> dict:
     similarity drops 28%, agreement does not drop - so it does not inherit the
     false low-confidence of the other one.
 
-    When they diverge a `guidance` string explains which to believe. A large gap
-    with agreement higher usually means the input is a typed question rather than
-    a ticket. A low value on both means route it to a human.
+    The two often differ on real tickets, so a gap between them says nothing
+    about the input on its own. When they differ by more than 0.15 a `guidance`
+    string says so; the lower figure is the conservative read, because on unseen
+    tickets the agreement calibration ran high and the similarity calibration
+    held. Below the abstention floor both are withheld: route it to a human.
 
     The neighbours are returned so the prediction can be checked rather than
     taken on trust; `voted` marks the ones that decided it, and their queues are

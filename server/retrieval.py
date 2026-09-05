@@ -192,19 +192,21 @@ class Index:
         by_similarity = self.expected_accuracy(top)
         by_agreement = self.expected_accuracy_from_agreement(share)
 
-        # Three states, checked in order.
+        # Two states.
         #
-        # Both confidence figures were measured on inputs that have a real
-        # neighbourhood. Below the abstention floor there is none, and agreement
-        # becomes actively misleading - it ignores the base rate, so three
-        # neighbours from Technical Support (29% of the corpus) "agree" on a query
-        # with no content in it. The floor is the gate; the two signals only refine
-        # what sits above it.
+        # Below the abstention floor there is no neighbourhood, so neither fitted
+        # figure applies: both were fitted on inputs that had one, and agreement
+        # in particular ignores the base rate - three neighbours from the largest
+        # queue (29% of the corpus) "agree" on a query with no content in it.
         #
-        # Above the floor, similarity is the better predictor but is not comparable
-        # across input shapes: handwritten text scores ~28% lower than this corpus's
-        # generated text whatever its topic, while agreement does not fall. So a wide
-        # gap between them says more about the input than about the prediction.
+        # Above the floor both figures are returned as fitted. They measure
+        # different things - similarity, how close the nearest precedent is;
+        # agreement, how consistent the neighbourhood is - and they differ on
+        # about half of real tickets, so a gap between them says nothing about
+        # the input on its own. The eval (reports/routing.md) shows agreement's
+        # fitted values run high on unseen tickets while similarity's hold, so
+        # when they differ the lower one is the conservative read, and the
+        # neighbours are returned so the caller can look rather than guess.
         guidance = None
         if top < self.floor:
             by_similarity = by_agreement = None
@@ -215,21 +217,14 @@ class Index:
                 "neighbours can still appear to agree at this range: agreement ignores "
                 "how common a queue is, and the largest queue is 29% of the corpus."
             )
-        elif by_similarity is not None and by_agreement is not None:
-            if by_agreement - by_similarity > 0.15:
-                guidance = (
-                    f"The two signals disagree ({by_similarity:.2f} by similarity, "
-                    f"{by_agreement:.2f} by agreement). That gap usually means the input "
-                    "is not ticket-shaped - a hand-typed question rather than a real "
-                    "ticket - which depresses similarity without affecting agreement. "
-                    "Trust the agreement figure here."
-                )
-            elif by_similarity - by_agreement > 0.15:
-                guidance = (
-                    f"Close nearest match ({top:.3f}) but the neighbours disagree "
-                    f"({share:.0%} share a queue). The ticket sits between queues; treat "
-                    f"{by_agreement:.2f} as the honest number and check the neighbours."
-                )
+        elif (by_similarity is not None and by_agreement is not None
+              and abs(by_similarity - by_agreement) > 0.15):
+            guidance = (
+                f"The two confidence figures differ ({by_similarity:.2f} by similarity, "
+                f"{by_agreement:.2f} by agreement). That is common on real tickets and "
+                "does not indicate a bad input; the lower figure is the conservative read. "
+                "Check the neighbours below."
+            )
 
         return {
             "queue": queue,
