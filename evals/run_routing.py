@@ -393,7 +393,7 @@ def main() -> None:
         *[f"| {lang} | {int((rows.language == lang).sum()):,} | {m['accuracy']:.3f} | {m['macro_f1']:.3f} |"
           for lang, m in by_language.items()],
         "",
-        "### Why German trails English: coverage, not the encoder",
+        "### Why German trails English: mostly coverage, not the encoder",
         "",
         f"Retrieval is monolingual in practice: the nearest neighbour of a German test ticket is "
         f"German {100 * monolingual['de']:.0f}% of the time, of an English one English "
@@ -412,7 +412,7 @@ def main() -> None:
         "",
         f"English at German coverage scores within {abs(coverage['en_cut_to_de_size'] - coverage['de_full']):.3f} "
         f"of German, and German loses only {coverage['de_full'] - coverage['de_own_slice']:.3f} without the "
-        "English vectors. The gap is how many "
+        "English vectors. The gap is mostly how many "
         "German tickets the archive holds, not how well the model reads German - so the production "
         "fix is more German data, not a bigger model.",
         "",

@@ -115,10 +115,34 @@ def test_row_cap_and_more_rows_flag(con):
 def test_character_budget_stops_early(con):
     out = db.run(con, "SELECT repeat('y', 15000) FROM range(5)")
     assert out["row_count"] < 5 and "character" in out["truncated"]
-    # A single row over the budget comes back with its longest cell cut to fit, and says so.
-    lone = db.run(con, "SELECT repeat('y', 1000000)")
-    assert lone["row_count"] == 1 and "cut" in lone["truncated"]
-    assert len(lone["rows"][0][0]) <= db.MAX_TOTAL_CHARS and lone["rows"][0][0].endswith("budget]")
+
+
+@pytest.mark.parametrize("sql", [
+    "SELECT repeat('y', 1000000)",                                    # one huge cell
+    "SELECT repeat('a', 50000) AS a, repeat('b', 50000) AS b",         # two large cells: both must shrink
+    "SELECT " + ", ".join(f"{i} AS c{i}" for i in range(20000)),       # wide numeric row: cutting cannot help
+])
+def test_lone_row_budget_is_a_real_bound(con, sql):
+    out = db.run(con, sql)
+    assert out["row_count"] == 1
+    assert sum(len(str(v)) for v in out["rows"][0]) <= db.MAX_TOTAL_CHARS
+    assert "over the" in out["truncated"]
+
+
+def test_medium_cells_keep_a_prefix_or_are_blanked_not_hollowed(con):
+    row = db.run(con, "SELECT " + ", ".join(f"repeat('q', 75) AS c{i}" for i in range(1000)))["rows"][0]
+    assert sum(len(str(v)) for v in row) <= db.MAX_TOTAL_CHARS
+    assert all(cell == "" or not str(cell).startswith(db.MARKER) for cell in row)   # no cell is only a marker
+
+
+def test_long_column_names_are_bounded(con):
+    out = db.run(con, 'SELECT 1 AS "' + "a" * 300000 + '"')
+    assert len(out["columns"][0]) <= db.MAX_COLUMN_NAME + len(db.MARKER)
+
+
+def test_two_large_cells_are_both_cut(con):
+    row = db.run(con, "SELECT repeat('a', 50000) AS a, repeat('b', 50000) AS b")["rows"][0]
+    assert all(str(cell).endswith("budget]") for cell in row)
 
 
 def test_watchdog_cancels_and_connection_survives(con, monkeypatch):

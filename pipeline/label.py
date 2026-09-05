@@ -14,8 +14,9 @@ Two fields per ticket:
                    "details"?
 
 The second field is the one worth paying for. A first reply that says "please
-provide details" guarantees another round trip, because the customer cannot tell
-what to send, and elapsed time is the expensive thing in a support queue. It is
+provide details" leaves the customer unable to tell what to send; the pilot's
+hypothesis is that it costs another exchange, which this archive cannot observe,
+and elapsed time is the expensive thing in a support queue. It is
 also a judgement that needs reading: "please furnish the system logs" and "please
 share details about your current campaigns" are the same shape and opposite in
 value.

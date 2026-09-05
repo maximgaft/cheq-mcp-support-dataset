@@ -30,7 +30,7 @@ Macro-F1 is the headline, not accuracy: the majority-class baseline reaches 29% 
 | de | 1,223 | 0.587 | 0.542 |
 | en | 2,781 | 0.795 | 0.782 |
 
-### Why German trails English: coverage, not the encoder
+### Why German trails English: mostly coverage, not the encoder
 
 Retrieval is monolingual in practice: the nearest neighbour of a German test ticket is German 96% of the time, of an English one English 99%. So each language is served by its own slice of the index, and the German slice is 2.3x smaller (9,645 vectors against 21,980). Cut the English slice down to the German one's size and English routing drops to the German level:
 
@@ -41,7 +41,7 @@ Retrieval is monolingual in practice: the nearest neighbour of a German test tic
 | German | full index | 0.542 |
 | German | German only (9,645 vectors) | 0.519 |
 
-English at German coverage scores within 0.002 of German, and German loses only 0.024 without the English vectors. The gap is how many German tickets the archive holds, not how well the model reads German - so the production fix is more German data, not a bigger model.
+English at German coverage scores within 0.002 of German, and German loses only 0.024 without the English vectors. The gap is mostly how many German tickets the archive holds, not how well the model reads German - so the production fix is more German data, not a bigger model.
 
 ## What the accuracy is made of: paraphrase twins
 

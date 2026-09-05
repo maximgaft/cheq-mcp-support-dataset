@@ -3,7 +3,7 @@
 :root { --fs: 8.8pt; }
 @page { size: A4; margin: 8mm 9mm; }
 * { box-sizing: border-box; }
-body { font: var(--fs)/1.22 "Helvetica Neue", Arial, sans-serif; color: #16181d; margin: 0; }
+body { font: var(--fs)/1.2 "Helvetica Neue", Arial, sans-serif; color: #16181d; margin: 0; }
 .head { border-bottom: 1.5px solid #16181d; padding-bottom: 4px; margin-bottom: 6px; }
 .head h1 { font-size: 15pt; margin: 0 0 2px; letter-spacing: -.2px; }
 .head p { margin: 0; font-size: 9.6pt; color: #333; }
@@ -43,7 +43,7 @@ td.l { width: 19%; font-weight: 600; color: #000; padding-right: 8px; }
 <section><h2>B. Why</h2>
 <p><b>Support over Churn</b> because Churn is one numeric table and SQL over it is solved; tickets are text plus fields, so retrieval fits the text, SQL fits the fields, and the host chooses.</p>
 <ul>
-<li><b>Avoided: an LLM server-side.</b> The host already has one; a second would double cost per call and make every tool non-deterministic and unevaluable. The one LLM pass, labelling 39,739 first replies as dead end or not (E), ran once and its output is committed.</li>
+<li><b>Avoided: an LLM server-side.</b> The host already has one; a second would double cost per call and make every tool non-deterministic and hard to evaluate. The one LLM pass, labelling 39,739 first replies as dead end or not (E), ran once and its output is committed.</li>
 <li><b>Avoided: a fine-tuned classifier.</b> It would likely score higher but returns a softmax with no evidence; kNN returns neighbours a user can check, and their agreement is a second confidence signal.</li>
 <li><b>Avoided: a reranker.</b> <span class="k">subject + body</span> over-ranked subject-less tickets 2.6×; embedding the body alone removed it.</li>
 </ul></section>
@@ -60,13 +60,13 @@ td.l { width: 19%; font-weight: 600; color: #000; padding-right: 8px; }
 
 <section class="span"><h2>D. Risks</h2>
 <table>
-<tr><td class="l">An agent drafts a reply with no real precedent</td><td>Floor <span class="n">0.47</span>, fitted on 400 validation tickets outside the index: accepts <span class="n">97.8%</span> of them and rejects the 20 off-topic queries it was fitted against, both in-sample. Below it, hits come back for context, not as draft material. Typed questions score ~0.18 lower whatever their topic, partly because they are shorter, so for them the floor is advisory.</td></tr>
+<tr><td class="l">An agent drafts a reply with no real precedent</td><td>Floor <span class="n">0.47</span>, fitted on 400 validation tickets outside the index: accepts <span class="n">97.8%</span> of them and rejects the 20 off-topic queries it was fitted against, both in-sample; on 40 held-out typed queries it rejects 24 of 25 off-topic and accepts 6 of 15 on-topic. Below it, hits come back for context, not as draft material. Typed questions score ~0.18 lower whatever their topic, partly because they are shorter, so for them the floor is advisory.</td></tr>
 <tr><td class="l">A confidence figure is over-trusted</td><td>Both queue figures, fitted on validation and checked on test: in the upper bands similarity holds within 0.006, agreement runs 0.034 high, so the tool calls that one a ceiling; when they differ by &gt;0.15 (half of test tickets) it names the lower as the conservative read. Priority has no confidence figure (macro-F1 0.766).</td></tr>
 <tr><td class="l">Source language label wrong on 10% of rows</td><td><span class="n">4,204</span> tickets labelled <span class="k">de</span> carry English text. <span class="k">language</span> is re-detected from the text; the original stays as <span class="k">language_label</span>.</td></tr>
 <tr><td class="l">Silently wrong tag aggregates</td><td>Positional <span class="k">tag_1..8</span> make <span class="k">GROUP BY tag_1</span> run clean and wrong; they are not served, and <span class="k">ticket_tags</span> holds one row per (ticket, tag), so the wrong query is unwritable.</td></tr>
 <tr><td class="l">SQL reads files or mutates</td><td>Read-only, external access off, config locked, one SELECT via the parser, a cursor and limits per call. Capability removed, not names blacklisted. Residual: metadata functions reveal the database path.</td></tr>
 <tr><td class="l">Memorised test set inflates scores</td><td>8,357 tickets appear in both multi-language files; split first and ~28% of test has a twin in training, so dedup precedes the split and the index holds train only. Beyond those, <span class="n">55%</span> of test tickets have a paraphrase in the index; on the rest, macro-F1 is 0.414.</td></tr>
-<tr><td class="l">German quietly worse than English</td><td><span class="n">0.782</span> en / <span class="n">0.542</span> de macro-F1. Coverage, not the encoder: retrieval is monolingual (96% of German queries' nearest neighbour is German) and the German index slice is 2.3× smaller; English cut to that size scores 0.545. Fix: more German tickets, not a bigger model.</td></tr>
+<tr><td class="l">German quietly worse than English</td><td><span class="n">0.782</span> en / <span class="n">0.542</span> de macro-F1. Mostly coverage, not the encoder: retrieval is monolingual (96% of German queries' nearest neighbour is German) and the German index slice is 2.3× smaller; English cut to that size scores 0.545. Fix: more German tickets, not a bigger model.</td></tr>
 <tr><td class="l">Prompt injection via ticket text</td><td>Retrieved text is untrusted: the server only embeds and returns it, and the tool description tells the host to read it as data, not instructions. Authorisation would live server-side (C), never with the model.</td></tr>
 </table></section>
 
@@ -78,5 +78,5 @@ td.l { width: 19%; font-weight: 600; color: #000; padding-right: 8px; }
 </div>
 
 <div class="foot">
-<b>Routing <span class="n">0.707</span> macro-F1</b> over 10 queues against 0.045 for always answering the largest queue · Claude Opus 5 answers <span class="n">22 of 22</span> graded questions through the tools (<span class="k">reports/host_eval.md</span>) · every evaluation metric here is generated into <span class="k">reports/</span>.
+<b>Routing <span class="n">0.707</span> macro-F1</b> over 10 queues against 0.045 for always answering the largest queue · Claude Opus 5 passes <span class="n">22 of 22</span> expected-value and refusal checks through the tools, unsourced extra numbers listed (<span class="k">reports/host_eval.md</span>) · every evaluation metric here is generated into <span class="k">reports/</span>.
 </div>

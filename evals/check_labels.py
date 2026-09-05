@@ -109,7 +109,8 @@ def main() -> None:
           for s in ("dead_end", "actionable_ask", "resolved")],
         "",
         f"**About half of all first replies are dead ends** — they neither resolve the ticket "
-        f"nor tell the customer what to send, so each one costs a round trip and buys nothing. "
+        f"nor tell the customer what to send. The label observes reply text, not outcomes: whether "
+        f"each dead end costs an extra exchange is the hypothesis a pilot with thread data would test. "
         f"The four-way labels should not be quoted on their own at {100 * kind_hits / len(ids):.0f}% "
         "agreement; this collapse is what the design note reports.",
         "",

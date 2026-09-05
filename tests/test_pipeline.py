@@ -98,3 +98,17 @@ def test_vote_and_agreement():
     assert routing.vote(labels, positions, sims, k=1)[0] == "A"
     assert routing.vote(labels, positions, sims, k=3)[0] == "B"    # 0.7 beats 0.5
     assert routing.agreement(labels, positions, n=3)[0] == pytest.approx(1 / 3)
+
+
+def test_holdout_abstention_set_is_disjoint_and_scored_after_the_floor():
+    import re
+
+    import yaml
+    fitting = yaml.safe_load(open("evals/abstention_queries.yaml"))
+    holdout = yaml.safe_load(open("evals/abstention_holdout.yaml"))
+    assert not {c["query"] for c in fitting} & {c["query"] for c in holdout}
+    assert sum(c["expect"] == "no_precedent" for c in holdout) == 25
+    assert sum(c["expect"] == "precedent" for c in holdout) == 15
+    source = open("pipeline/07_calibrate.py").read()
+    assert source.index("floor = ") < source.index("HOLDOUT.read_text()")   # never used to set the floor
+    assert re.search(r"HOLDOUT\b", source[: source.index("floor = ")]) is None or "HOLDOUT = ROOT" in source[: source.index("floor = ")]

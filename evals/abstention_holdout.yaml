@@ -1,0 +1,94 @@
+# Held-out check for the abstention floor. Nothing here is used to fit anything:
+# pipeline/07_calibrate.py sets the floor from evals/abstention_queries.yaml and
+# 400 validation tickets, then scores these queries at that floor and reports the
+# result as out-of-sample evidence.
+#
+# Provenance: drafted with an AI assistant after the floor was fixed, reviewed by
+# hand, and checked to share no query with the fitting set. 25 off-topic (20
+# trivia-shaped questions and 5 fault reports in domains the corpus does not
+# cover, the shape the fitting set calls its hard cases) and 15 on-topic typed
+# questions in generic IT-support phrasing, not tuned to the corpus vocabulary.
+# 32 English, 8 German.
+#
+# expect: no_precedent  - off topic, the tool should abstain
+# expect: precedent      - on topic, the tool should find something
+- query: "How long should I boil an egg for a runny yolk?"
+  expect: no_precedent
+- query: "What is the capital of Mongolia?"
+  expect: no_precedent
+- query: "Write me a haiku about autumn rain."
+  expect: no_precedent
+- query: "Which exercises strengthen the lower back without equipment?"
+  expect: no_precedent
+- query: "Convert 72 degrees Fahrenheit to Celsius."
+  expect: no_precedent
+- query: "How many players are on the court for one basketball team?"
+  expect: no_precedent
+- query: "When should I prune a rose bush, spring or autumn?"
+  expect: no_precedent
+- query: "Explain how photosynthesis works in simple terms."
+  expect: no_precedent
+- query: "Recommend a science-fiction novel for a long flight."
+  expect: no_precedent
+- query: "How do I get red wine out of a wool carpet?"
+  expect: no_precedent
+- query: "What is the difference between a Roth IRA and a 401(k)?"
+  expect: no_precedent
+- query: "How many moons does Jupiter have?"
+  expect: no_precedent
+- query: "Translate 'good morning, how are you' into Japanese."
+  expect: no_precedent
+- query: "What is the best way to learn to juggle three balls?"
+  expect: no_precedent
+- query: "How do I descale an electric kettle?"
+  expect: no_precedent
+- query: "What causes the northern lights?"
+  expect: no_precedent
+- query: "Wie lange muss ich Kartoffeln für Kartoffelsalat kochen?"
+  expect: no_precedent
+- query: "Wer war der erste Bundeskanzler der Bundesrepublik?"
+  expect: no_precedent
+- query: "Wie viele Kalorien hat eine mittelgroße Banane?"
+  expect: no_precedent
+- query: "Welche Sehenswürdigkeiten sollte ich an einem Tag in Wien sehen?"
+  expect: no_precedent
+- query: "My car's check-engine light came on after refuelling and the engine idles roughly."
+  expect: no_precedent
+- query: "The kitchen tap keeps dripping even when it is fully closed."
+  expect: no_precedent
+- query: "The belt on our combine harvester slips under load since the last service."
+  expect: no_precedent
+- query: "My dog has been limping on the front left leg since yesterday's walk."
+  expect: no_precedent
+- query: "Die Waschmaschine pumpt nicht mehr ab und zeigt den Fehler E21."
+  expect: no_precedent
+- query: "The two-factor code never arrives by SMS."
+  expect: precedent
+- query: "My invoice shows the wrong VAT rate."
+  expect: precedent
+- query: "The export to CSV produces an empty file."
+  expect: precedent
+- query: "How do I download all of my account data?"
+  expect: precedent
+- query: "I still have not received the refund for the order I cancelled last week."
+  expect: precedent
+- query: "The office printer shows as offline for everyone."
+  expect: precedent
+- query: "Our SSO login redirects to a blank page."
+  expect: precedent
+- query: "How much does upgrading to the premium plan cost per user?"
+  expect: precedent
+- query: "My laptop will not connect to the company VPN since yesterday."
+  expect: precedent
+- query: "The replacement unit arrived with a cracked screen."
+  expect: precedent
+- query: "I need to change the billing address on my account."
+  expect: precedent
+- query: "Your API has been returning 500 errors since yesterday evening."
+  expect: precedent
+- query: "Wie kündige ich mein Abonnement zum Monatsende?"
+  expect: precedent
+- query: "Meine Lizenz wird als abgelaufen angezeigt, obwohl ich bezahlt habe."
+  expect: precedent
+- query: "Können Sie mir eine Kopie der Rechnung vom März schicken?"
+  expect: precedent

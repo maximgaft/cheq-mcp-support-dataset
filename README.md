@@ -9,9 +9,9 @@ find how similar tickets were handled before, and predict where a ticket should
 be routed, with a measured confidence attached.
 
 **There is no API key and no LLM in the server.** Your MCP client supplies the
-model; the server supplies grounded facts and refusals. Nothing in the build, the
-evals or the tests calls an LLM, and after the first build everything runs
-offline.
+model; the server supplies grounded facts and refusals. Nothing in the build,
+`make eval` or the tests calls an LLM; one optional eval, `make host-eval`, does.
+After the first build everything else runs offline.
 
 The reasoning behind the design is one page: **[docs/design.pdf](docs/design.pdf)**.
 
@@ -27,12 +27,13 @@ uv sync          # installs Python 3.14 and the packages
 make build       # fetch the data (checksummed) + 8 stages, ~2 min first run, ~80s after
                  # the first run also downloads ~470 MB of embedding weights - it looks like a hang; it isn't
 make eval        # routing eval, label agreement, question set, MCP smoke test -> reports/  (~30s)
-make test        # 63 unit tests, no built data needed  (~2s)
+make test        # 75 unit tests, no built data needed  (~2s)
 ```
 
 Timings are from an M-series MacBook; a CPU-only laptop embeds more slowly and
-shows a progress bar while it does. On this machine a rebuild reproduces every
-file in `reports/` byte for byte.
+shows a progress bar while it does. On this machine a rebuild reproduces the five
+offline reports in `reports/` byte for byte; the host-eval report is a record of
+one model run.
 
 Without `make`, run the same steps by hand:
 
@@ -107,7 +108,7 @@ file, so it starts correctly from any working directory.
 |---|---|
 | `get_schema` | What columns exist, what values they take, where the rows came from (`source_rows` reconciles 61,765 downloaded rows to 40,047 served), and **what this data cannot answer** |
 | `run_sql` | One read-only `SELECT`. Counts, mixes, distributions |
-| `find_similar_tickets` | Nearest past tickets **and the replies that were sent**, each tagged with `reply_state`. Below a similarity floor of 0.47 (fitted on validation tickets): `has_precedent: false` and guidance; the hits still come back for context |
+| `find_similar_tickets` | Nearest past tickets **and the replies that were sent**, each tagged with `reply_state`, a label on the reply text. Below a similarity floor of 0.47 (fitted on validation tickets): `has_precedent: false` and guidance; the hits still come back for context |
 | `suggest_routing` | Predicted queue and priority, two fitted confidence figures for the queue (none for priority; its test macro-F1 is 0.766), and the neighbours that decided it |
 
 Every threshold and accuracy figure in a tool description is rendered from the
@@ -198,11 +199,13 @@ accuracy on the test split.
 - [reports/routing.md](reports/routing.md): **0.707 macro-F1** across 10 queues
   (F1 averaged over the queues with equal weight, so small queues count) against
   0.045 for always answering "Technical Support". English 0.782, German 0.542,
-  and the gap is index coverage, not the model: the German slice of the index
+  and the gap is mostly index coverage, not the model: the German slice of the index
   is 2.3× smaller, and English cut to that size scores 0.545.
 - [reports/calibration.md](reports/calibration.md): the 0.47 floor accepts
   97.8% of the 400 validation tickets it was fitted on and rejects the 20
-  off-topic queries it was fitted against. Both figures are in-sample.
+  off-topic queries it was fitted against, both in-sample. On 40 further typed queries
+  never used for fitting (AI-drafted, hand-reviewed, five of them fault reports in
+  foreign domains) it rejects 24 of 25 off-topic and accepts 6 of 15 on-topic.
 - [reports/labels.md](reports/labels.md): 49.8% of first replies are dead ends.
 - [reports/questions.md](reports/questions.md): 22 grader-style questions, the
   SQL a host would write for each, and the answer.
@@ -214,17 +217,22 @@ conversation against the live server, and writes
 [reports/host_eval.md](reports/host_eval.md) with the model that served each
 answer, the tools it called, the SQL it wrote, and a deterministic pass/fail.
 It is the check that the natural-language promise holds, not just the tools.
-Claude Opus 5 answered 22 of 22 graded questions correctly, refusing the three
-unanswerable ones up front and naming the missing data each time.
+The run was launched with Claude Opus 5 and passed 22 of 22 expected-value and refusal
+checks, refusing the three unanswerable questions up front. The committed report was
+re-graded from saved transcripts that did not record the served model, so that name is
+the launch setting; a fresh run records the model the API returns. Passing is not the
+same as every sentence being right: the report lists the numbers no tool returned, and
+in one passing answer they are wrong (1,478 and 24% where the database says 1,185 and 29.96%).
 
 ## Tests
 
-`make test` runs 63 tests in about two seconds and needs no built data: one test
+`make test` runs 75 tests in about two seconds and needs no built data: one test
 per layer of the SQL guard, so removing a layer fails exactly its test; the
 retrieval and routing rules on a six-vector index with the model stubbed out; the
 pure pipeline functions; the embedding model's required `query:`/`passage:`
-input prefixes; and the tool descriptions in both their rendered and pre-build
-forms. There is no CI in this repo by choice; in production `make test` and
+input prefixes; the tool descriptions in both their rendered and pre-build
+forms, and the host-eval grader itself, on deliberately right and deliberately
+wrong answers. There is no CI in this repo by choice; in production `make test` and
 `make eval` would run on every change.
 
 ## Smaller decisions, briefly
@@ -256,10 +264,10 @@ numbers behind them are in the sections above and in `reports/`.
 ```
 pipeline/   00_fetch.py + 8 numbered stages · embedding.py (shared with the server) · label.py
 server/     __main__.py (tools) · db.py (SQL guard) · retrieval.py (vector search, routing)
-evals/      run_routing.py · check_labels.py · check_questions.py · smoke.py
-            abstention_queries.yaml · answer_labels.yaml · questions.yaml
-tests/      test_db_guard.py · test_retrieval.py · test_embedding.py · test_pipeline.py · test_server_text.py
-reports/    generated: routing.md · calibration.md · labels.md · questions.md · smoke.md
+evals/      run_routing.py · check_labels.py · check_questions.py · smoke.py · host_eval.py (needs an API key)
+            abstention_queries.yaml · abstention_holdout.yaml · answer_labels.yaml · questions.yaml
+tests/      test_db_guard.py · test_retrieval.py · test_embedding.py · test_pipeline.py · test_server_text.py · test_host_eval_grader.py
+reports/    generated offline: routing.md · calibration.md · labels.md · questions.md · smoke.md · host_eval.md (one recorded model run)
 data/       answer_labels.parquet, the committed output of label.py; everything else here is fetched or built
 docs/       design.html (source) → design.pdf, the one-page design note · design_preview.png
 ```
@@ -271,18 +279,21 @@ docs/       design.html (source) → design.pdf, the one-page design note · des
   real archive; the numbers do not. `get_schema` says this too.
 - **About half of all first replies are dead ends.** They neither resolve the
   ticket nor tell the customer what to send (49.8% over 39,739 labelled answers,
-  55% over 40 read by hand). `find_similar_tickets` tags every hit with
-  `reply_state` so a draft copies the replies that ended the round trip.
+  55% over 40 read by hand). The label observes reply text, not outcomes: whether
+  a dead end costs an extra exchange is the hypothesis a pilot would test.
+  `find_similar_tickets` tags every hit with `reply_state` so a draft can prefer
+  the replies the label calls resolved or actionable.
 - **7.6% of answers are not support replies at all**: customer text sitting in
   the answer column.
 - `reply_state` agrees with the hand labels 75% of the time. The raw four-way
   label agrees 70% and is not served.
 - **Routing accuracy is partly lookup.** 55% of test tickets have a rewording of
   themselves in the index; on the other 45%, macro-F1 is 0.414.
-- **German routing trails English by 0.24 macro-F1.** The cause is coverage:
+- **German routing trails English by 0.24 macro-F1.** The cause is mostly coverage:
   the archive holds 2.3× fewer German tickets, and English cut to the same
   count scores the same as German. More German data closes it, not a bigger model.
-- The floor **wrongly refuses about 40% of hand-typed questions**;
+- The floor **wrongly refuses about half of hand-typed questions** (15 of 30
+  across the fitting and held-out sets);
   `has_precedent: false` tells the host not to draft from a real ticket; the hits
   are still returned, and for typed text the floor is advisory.
 - **The floor governs what the server returns, not whether the host calls it.**

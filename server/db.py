@@ -63,6 +63,8 @@ DEFAULT_MAX_ROWS = 100
 ROW_CEILING = 500
 MAX_TOTAL_CHARS = 40_000
 TIMEOUT_SECONDS = 10
+MARKER = " ... [cut to fit the response budget]"
+MAX_COLUMN_NAME = 200   # a SELECT alias can be a megabyte; the budget is on cells, so bound names separately
 
 
 class SqlRejected(Exception):
@@ -98,6 +100,38 @@ def _cell(value: object) -> object:
     return str(value)
 
 
+def fit_row(row: list, budget: int) -> str:
+    """Shrink a lone over-budget row in place until its cells total at most `budget`
+    characters, and say what was done.
+
+    Long cells are cut first, largest first, each ending in MARKER. When the cells
+    are too short for cutting to help - a wide row of small values - trailing cells
+    are blanked instead. Every value is handled as text, so a numeric row cannot
+    break the cut. The budget is a bound on cell characters, not on the JSON
+    envelope around them."""
+    sizes = [len(str(v)) for v in row]
+    over = sum(sizes) - budget
+    cut = 0
+    for j in sorted(range(len(row)), key=lambda j: -sizes[j]):
+        if over <= 0 or sizes[j] <= 4 * len(MARKER):   # keep a meaningful prefix, or leave it to blanking
+            break
+        text = str(row[j])
+        take = min(over + len(MARKER), len(text))
+        row[j] = text[: len(text) - take] + MARKER
+        over -= sizes[j] - len(row[j])
+        sizes[j] = len(row[j])
+        cut += 1
+    blanked = 0
+    for j in range(len(row) - 1, -1, -1):
+        if over <= 0:
+            break
+        over -= sizes[j]
+        row[j], sizes[j] = "", 0
+        blanked += 1
+    parts = [f"{cut} long cell(s) cut" if cut else "", f"the last {blanked} of {len(row)} cells blanked" if blanked else ""]
+    return " and ".join(part for part in parts if part)
+
+
 def run(con: duckdb.DuckDBPyConnection, sql: str, max_rows: int = DEFAULT_MAX_ROWS) -> dict:
     """Validate, execute on a private cursor under a timeout, and return a
     size-bounded result."""
@@ -109,7 +143,8 @@ def run(con: duckdb.DuckDBPyConnection, sql: str, max_rows: int = DEFAULT_MAX_RO
     watchdog.start()
     try:
         cur.execute(sql)
-        columns = [d[0] for d in cur.description]
+        columns = [d[0] if len(d[0]) <= MAX_COLUMN_NAME else d[0][:MAX_COLUMN_NAME] + MARKER
+                   for d in cur.description]
         fetched = cur.fetchmany(max_rows + 1)  # one extra reveals "there is more"
     except duckdb.InterruptException as exc:
         raise SqlRejected(
@@ -132,15 +167,11 @@ def run(con: duckdb.DuckDBPyConnection, sql: str, max_rows: int = DEFAULT_MAX_RO
         rows.append(row)
         chars += size
 
-    if chars > MAX_TOTAL_CHARS:  # only a lone first row can get here: cut its longest cell to fit
-        row = rows[0]
-        longest = max(range(len(row)), key=lambda j: len(row[j]) if isinstance(row[j], str) else -1)
-        marker = f" ... [cell cut to fit the {MAX_TOTAL_CHARS:,}-character budget]"
-        keep = max(0, len(row[longest]) - (chars - MAX_TOTAL_CHARS) - len(marker))
-        row[longest] = row[longest][:keep] + marker
+    if chars > MAX_TOTAL_CHARS:  # only a lone first row can get here: shrink it to the budget
+        what = fit_row(rows[0], MAX_TOTAL_CHARS)
         truncated = (
             f"returned one row of {chars:,} characters, over the {MAX_TOTAL_CHARS:,}-character "
-            "budget - its longest cell was cut; select fewer or shorter columns"
+            f"budget - {what}; select fewer or shorter columns"
         )
     elif len(rows) < len(fetched[:max_rows]):
         truncated = (

@@ -40,6 +40,6 @@ That confusion moves tickets *within* `dead_end` — a vague ask and a bare ackn
 | `actionable_ask` | 37.8% | 30.0% | 30.0% |
 | `resolved` | 12.4% | 15.0% | 15.0% |
 
-**About half of all first replies are dead ends** — they neither resolve the ticket nor tell the customer what to send, so each one costs a round trip and buys nothing. The four-way labels should not be quoted on their own at 70% agreement; this collapse is what the design note reports.
+**About half of all first replies are dead ends** — they neither resolve the ticket nor tell the customer what to send. The label observes reply text, not outcomes: whether each dead end costs an extra exchange is the hypothesis a pilot with thread data would test. The four-way labels should not be quoted on their own at 70% agreement; this collapse is what the design note reports.
 
 Caveat: n=40 adjudicated tickets. The intervals are wide, which is why the two estimates agreeing to within a few points is the claim, not either number alone.

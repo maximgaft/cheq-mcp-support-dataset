@@ -47,6 +47,7 @@ DATA = ROOT / "data"
 INDEX = DATA / "interim" / "06_index.npz"
 SPLIT = DATA / "interim" / "05_split.parquet"
 CASES = ROOT / "evals" / "abstention_queries.yaml"
+HOLDOUT = ROOT / "evals" / "abstention_holdout.yaml"   # scored at the floor, never used to set it
 OUT_JSON = DATA / "interim" / "07_thresholds.json"
 OUT_REPORT = ROOT / "reports" / "calibration.md"
 
@@ -85,6 +86,13 @@ def main() -> None:
 
     provenance_gap = float(real.mean() - positive.mean())
     topic_gap = float(positive.mean() - negative.mean())
+    # Out-of-sample check: typed queries drafted after the floor was fixed and never used to set it.
+    holdout = yaml.safe_load(HOLDOUT.read_text())
+    held_pos = np.array([top1(c["query"]) for c in holdout if c["expect"] == "precedent"])
+    held_neg = np.array([top1(c["query"]) for c in holdout if c["expect"] == "no_precedent"])
+    held_off_rejected = int((held_neg < floor).sum())
+    held_on_accepted = int((held_pos >= floor).sum())
+
     length_gap = float(real.mean() - short.mean())
     length_share = length_gap / provenance_gap if provenance_gap else float("nan")
     false_reject = float((positive < floor).mean())
@@ -116,6 +124,35 @@ def main() -> None:
         report.append("| " + " | ".join(cells) + " |")
 
     report += [
+        "",
+        "## Held-out check",
+        "",
+        f"The floor above was set using the {len(negative)} off-topic and {len(positive)} on-topic queries in "
+        "`evals/abstention_queries.yaml`, so its figures on them are in-sample. "
+        "`evals/abstention_holdout.yaml` holds "
+        f"{len(held_neg)} off-topic and {len(held_pos)} on-topic typed queries drafted with an AI assistant after "
+        "the floor was fixed, reviewed by hand, and never used for fitting; the off-topic half includes five "
+        "fault reports in domains the corpus does not cover, the shape the fitting set treats as its hard cases. "
+        "At the same floor:",
+        "",
+        "| held-out population | n | mean | max | at the floor |",
+        "|---|--:|--:|--:|---|",
+        f"| off topic | {len(held_neg)} | {held_neg.mean():.3f} | {held_neg.max():.3f} | "
+        f"{held_off_rejected} of {len(held_neg)} rejected |",
+        f"| on topic, typed | {len(held_pos)} | {held_pos.mean():.3f} | {held_pos.max():.3f} | "
+        f"{held_on_accepted} of {len(held_pos)} accepted |",
+        "",
+        f"Out of sample, the floor rejects {held_off_rejected} of {len(held_neg)} off-topic queries and accepts "
+        f"{held_on_accepted} of {len(held_pos)} on-topic typed questions, against "
+        f"{int((positive >= floor).sum())} of {len(positive)} on the fitting set. The on-topic figures never enter "
+        "the floor rule (it uses only the off-topic ceiling and the corpus percentile), so the difference is "
+        f"sampling variation plus a shorter, more generic held-out set: with n={len(held_pos)} the 95% interval on "
+        f"{held_on_accepted} of {len(held_pos)} runs roughly "
+        f"{100 * max(0.0, held_on_accepted / len(held_pos) - 1.96 * (held_on_accepted / len(held_pos) * (1 - held_on_accepted / len(held_pos)) / len(held_pos)) ** 0.5):.0f}-"
+        f"{100 * min(1.0, held_on_accepted / len(held_pos) + 1.96 * (held_on_accepted / len(held_pos) * (1 - held_on_accepted / len(held_pos)) / len(held_pos)) ** 0.5):.0f}%. "
+        f"Pooled over all {len(positive) + len(held_pos)} typed on-topic questions the floor accepts "
+        f"{int((positive >= floor).sum()) + held_on_accepted}. With n={len(held_neg)} the off-topic rejection rate "
+        "is still only loosely bounded, but it is no longer the number the floor was chosen on.",
         "",
         "## Two effects of the same size",
         "",
@@ -185,6 +222,12 @@ def main() -> None:
         "provenance_gap": round(provenance_gap, 4),
         "topic_gap": round(topic_gap, 4),
         "short_words": short_words,
+        "n_holdout_off_topic": int(len(held_neg)),
+        "holdout_off_topic_accepted": round(float((held_neg >= floor).mean()), 4),
+        "n_holdout_on_topic": int(len(held_pos)),
+        "holdout_on_topic_accepted": round(float((held_pos >= floor).mean()), 4),
+        "typed_on_topic_accepted_pooled": round((int((positive >= floor).sum()) + held_on_accepted) / (len(positive) + len(held_pos)), 4),
+        "n_typed_on_topic_pooled": int(len(positive) + len(held_pos)),
         "real_short_mean": round(float(short.mean()), 4),
         "length_share_of_gap": round(length_share, 4),
         "generated_by": "pipeline/07_calibrate.py",
