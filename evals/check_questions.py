@@ -1,7 +1,8 @@
 """Run the grader-style questions in evals/questions.yaml and check every answer.
 
 Each SQL question goes through server.db.run - the same guard the server uses -
-and its first row must equal `expect`. Each refusal question must match a
+and its first row must equal `expect` (or, with `expect_rows`, every returned row
+must equal the listed rows in order). Each refusal question must match a
 sentence in get_schema's cannot_answer list. Writes reports/questions.md: the
 question, the SQL a host would write, and the answer.
 """
@@ -43,9 +44,14 @@ def main() -> None:
     for case in cases:
         if case["kind"] == "sql":
             rows = db.run(con, case["sql"])["rows"]
-            got = rows[0] if rows else []
-            ok = same(case["expect"], got)
-            answer = ", ".join(str(v) for v in got)
+            if "expect_rows" in case:
+                got = rows
+                ok = len(rows) == len(case["expect_rows"]) and all(same(e, g) for e, g in zip(case["expect_rows"], rows))
+                answer = "; ".join(", ".join(str(v) for v in row) for row in rows)
+            else:
+                got = rows[0] if rows else []
+                ok = same(case["expect"], got)
+                answer = ", ".join(str(v) for v in got)
             lines.append(f"| {case['question']} | `{case['sql']}` | {answer} |")
         else:
             hit = next((s for s in CANNOT_ANSWER if case["expect"] in s), None)
@@ -54,7 +60,7 @@ def main() -> None:
             lines.append(f"| {case['question']} | *refused* | {hit or 'NOT REFUSED'} |")
         print(f"  {'ok  ' if ok else 'FAIL'} {case['id']:<24} {got}")
         if not ok:
-            failures.append((case["id"], case["expect"], got))
+            failures.append((case["id"], case.get("expect", case.get("expect_rows")), got))
 
     REPORT.parent.mkdir(parents=True, exist_ok=True)
     REPORT.write_text("\n".join([

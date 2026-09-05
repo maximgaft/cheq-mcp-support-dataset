@@ -27,7 +27,7 @@ uv sync          # installs Python 3.14 and the packages
 make build       # fetch the data (checksummed) + 8 stages, ~2 min first run, ~80s after
                  # the first run also downloads ~470 MB of embedding weights - it looks like a hang; it isn't
 make eval        # routing eval, label agreement, question set, MCP smoke test -> reports/  (~30s)
-make test        # 62 unit tests, no built data needed  (~2s)
+make test        # 63 unit tests, no built data needed  (~2s)
 ```
 
 Timings are from an M-series MacBook; a CPU-only laptop embeds more slowly and
@@ -73,7 +73,8 @@ None are required. Two are optional:
 | variable | default | purpose |
 |---|---|---|
 | `CHEQ_DB` | `data/interim/08_tickets.duckdb` | point the server at a different database file |
-| `ANTHROPIC_API_KEY` | — | **only** for `make label` (the 40-ticket gold set) and `make label-all` (the whole corpus, which wrote the committed parquet) |
+| `ANTHROPIC_API_KEY` | — | **only** for `make label` (the 40-ticket gold set), `make label-all` (the whole corpus, which wrote the committed parquet) and `make host-eval` (below) |
+| `CHEQ_HOST_MODEL` | `claude-opus-5` | the model `make host-eval` drives |
 
 ## Connect it to Claude Code
 
@@ -106,8 +107,8 @@ file, so it starts correctly from any working directory.
 |---|---|
 | `get_schema` | What columns exist, what values they take, where the rows came from (`source_rows` reconciles 61,765 downloaded rows to 40,047 served), and **what this data cannot answer** |
 | `run_sql` | One read-only `SELECT`. Counts, mixes, distributions |
-| `find_similar_tickets` | Nearest past tickets **and the replies that were sent**, each tagged with `reply_state`. Below a similarity floor of 0.47, calibrated on real tickets: `has_precedent: false` and guidance |
-| `suggest_routing` | Predicted queue and priority, two fitted confidence figures, and the neighbours that decided it |
+| `find_similar_tickets` | Nearest past tickets **and the replies that were sent**, each tagged with `reply_state`. Below a similarity floor of 0.47 (fitted on validation tickets): `has_precedent: false` and guidance; the hits still come back for context |
+| `suggest_routing` | Predicted queue and priority, two fitted confidence figures for the queue (none for priority; its test macro-F1 is 0.766), and the neighbours that decided it |
 
 Every threshold and accuracy figure in a tool description is rendered from the
 files the build wrote, so the text the model reads cannot drift from the numbers
@@ -126,7 +127,7 @@ strings cut):
 ```json
 {"floor": 0.47, "top_similarity": 0.342, "has_precedent": false,
  "results": "... the two nearest tickets, returned for context ...",
- "guidance": "Closest match is 0.342, below the 0.47 floor calibrated on real ticket text. For a real ticket this means there is no usable precedent - route it to a human instead of drafting a reply. For a question typed by a person the floor is advisory: typed text scores lower than this corpus's tickets whatever its topic, so read the hits with judgement."}
+ "guidance": "Closest match is 0.342, below the 0.47 floor calibrated on corpus ticket text. For a real ticket this means there is no usable precedent - route it to a human instead of drafting a reply. For a question typed by a person the floor is advisory: typed text scores lower than this corpus's tickets whatever its topic, so read the hits with judgement."}
 ```
 
 **Route a fragment.** `suggest_routing` with *"my wifi keeps dropping"*
@@ -200,15 +201,23 @@ accuracy on the test split.
   and the gap is index coverage, not the model: the German slice of the index
   is 2.3× smaller, and English cut to that size scores 0.545.
 - [reports/calibration.md](reports/calibration.md): the 0.47 floor accepts
-  97.8% of real tickets and rejects 20 of 20 off-topic queries.
+  97.8% of the 400 validation tickets it was fitted on and rejects the 20
+  off-topic queries it was fitted against. Both figures are in-sample.
 - [reports/labels.md](reports/labels.md): 49.8% of first replies are dead ends.
-- [reports/questions.md](reports/questions.md): 19 grader-style questions, the
+- [reports/questions.md](reports/questions.md): 22 grader-style questions, the
   SQL a host would write for each, and the answer.
 - [reports/smoke.md](reports/smoke.md): every tool called over MCP stdio.
 
+One more eval needs an API key and is not part of `make eval`: `make host-eval`
+has a real model answer the 22 questions through the tools, each as a fresh
+conversation against the live server, and writes
+[reports/host_eval.md](reports/host_eval.md) with the model that served each
+answer, the tools it called, the SQL it wrote, and a deterministic pass/fail.
+It is the check that the natural-language promise holds, not just the tools.
+
 ## Tests
 
-`make test` runs 62 tests in about two seconds and needs no built data: one test
+`make test` runs 63 tests in about two seconds and needs no built data: one test
 per layer of the SQL guard, so removing a layer fails exactly its test; the
 retrieval and routing rules on a six-vector index with the model stubbed out; the
 pure pipeline functions; the embedding model's required `query:`/`passage:`
@@ -236,7 +245,7 @@ numbers behind them are in the sections above and in `reports/`.
 - **Body only, with the `query:`/`passage:` prefixes.** A tenth of tickets have
   no subject, and concatenating it made two document populations that do not
   compete fairly. Getting the prefixes wrong costs quality with no error anywhere.
-- **The floor is fitted on real tickets and advisory for typed text.** Typed
+- **The floor is fitted on corpus tickets and advisory for typed text.** Typed
   questions score lower than generated tickets whatever their topic, partly
   because they are shorter, so one threshold cannot serve both shapes.
 
@@ -272,7 +281,8 @@ docs/       design.html (source) → design.pdf, the one-page design note · des
   the archive holds 2.3× fewer German tickets, and English cut to the same
   count scores the same as German. More German data closes it, not a bigger model.
 - The floor **wrongly refuses about 40% of hand-typed questions**;
-  `has_precedent` is a refusal for a real ticket and advisory for typed text.
+  `has_precedent: false` tells the host not to draft from a real ticket; the hits
+  are still returned, and for typed text the floor is advisory.
 - **The floor governs what the server returns, not whether the host calls it.**
   Asked the braising question plainly, Claude answers from its own knowledge and
   never calls the tool. A tool cannot stop a model answering from what it

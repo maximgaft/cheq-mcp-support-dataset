@@ -39,7 +39,7 @@ sys.path.insert(0, str(ROOT))
 
 from pipeline.embedding import center, document_text, embed_queries  # noqa: E402
 from server import db  # noqa: E402
-from server.retrieval import Index, collapse_duplicates  # noqa: E402
+from server.retrieval import GUIDANCE_GAP, Index, collapse_duplicates  # noqa: E402
 
 INTERIM = ROOT / "data" / "interim"
 REPORT = ROOT / "reports" / "routing.md"
@@ -290,6 +290,18 @@ def main() -> None:
         f"agreement@{AGREEMENT_N}": auc(agree, correct),
         "z-scored sum of both": auc(zsum(top1, agree, scale), correct),
     }
+    # How often the two served figures disagree on unseen tickets: this is what the
+    # suggest_routing description quotes instead of "often".
+    def lookup(value: float, table: list[dict]) -> float | None:
+        for band in sorted(table, key=lambda b: -b["min"]):
+            if value >= band["min"]:
+                return band["accuracy"]
+        return None
+    above = top1 >= idx.floor
+    diverge = np.array([abs(lookup(s, bands) - lookup(a, agree_bands)) > GUIDANCE_GAP
+                        for s, a in zip(top1[above], agree[above])])
+    gap_share = float(diverge.mean())
+
     upper = [b for b in bands if b["min"] != min(SIM_BANDS)]
     sim_drift = max(abs(b["accuracy"] - test_bands[b["min"]]["accuracy"]) for b in upper)
     upper_agree = [b for b in agree_bands if b["min"] != min(AGREE_BANDS)]
@@ -494,8 +506,10 @@ def main() -> None:
         "artifact that better deduplication would remove. The collapsed figure is the one "
         "published.",
         "",
-        "So `suggest_routing` returns both. When they disagree, the neighbours are listed so "
-        "the caller can look rather than guess.",
+        f"So `suggest_routing` returns both. They differ by more than {GUIDANCE_GAP:.2f} on "
+        f"{100 * gap_share:.0f}% of test tickets above the floor, so a gap says nothing about the "
+        "input on its own; when they differ, the neighbours are listed so the caller can look "
+        "rather than guess.",
         "",
         "## Where the errors are",
         "",
@@ -526,6 +540,7 @@ def main() -> None:
         "fitted_on": "val",
         "k": best_k,
         "agreement_n": AGREEMENT_N,
+        "guidance_gap_share": round(gap_share, 4),
         "reliability_bands": [{"min_similarity": b["min"], "n": b["n"], "accuracy": b["accuracy"]}
                               for b in bands],
         "agreement_bands": [{"min_agreement": b["min"], "n": b["n"], "accuracy": b["accuracy"]}

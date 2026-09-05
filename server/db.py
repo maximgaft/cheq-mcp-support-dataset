@@ -126,12 +126,23 @@ def run(con: duckdb.DuckDBPyConnection, sql: str, max_rows: int = DEFAULT_MAX_RO
     chars = 0
     for record in fetched[:max_rows]:
         row = [_cell(v) for v in record]
-        chars += sum(len(str(v)) for v in row)
-        if chars > MAX_TOTAL_CHARS and rows:
+        size = sum(len(str(v)) for v in row)
+        if chars + size > MAX_TOTAL_CHARS and rows:
             break
         rows.append(row)
+        chars += size
 
-    if len(rows) < len(fetched[:max_rows]):
+    if chars > MAX_TOTAL_CHARS:  # only a lone first row can get here: cut its longest cell to fit
+        row = rows[0]
+        longest = max(range(len(row)), key=lambda j: len(row[j]) if isinstance(row[j], str) else -1)
+        marker = f" ... [cell cut to fit the {MAX_TOTAL_CHARS:,}-character budget]"
+        keep = max(0, len(row[longest]) - (chars - MAX_TOTAL_CHARS) - len(marker))
+        row[longest] = row[longest][:keep] + marker
+        truncated = (
+            f"returned one row of {chars:,} characters, over the {MAX_TOTAL_CHARS:,}-character "
+            "budget - its longest cell was cut; select fewer or shorter columns"
+        )
+    elif len(rows) < len(fetched[:max_rows]):
         truncated = (
             f"stopped at {len(rows)} rows to stay under the {MAX_TOTAL_CHARS:,}-character "
             "response budget - select fewer columns, or aggregate"

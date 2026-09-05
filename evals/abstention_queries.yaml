@@ -13,7 +13,7 @@
 # corpus's generated text regardless of topic, so a set of handwritten negatives
 # measures provenance as much as it measures relevance. The handwritten positives
 # below are the control that exposes it - they are unambiguously on topic and
-# still score well below real tickets.
+# still score well below the corpus's generated tickets.
 #
 # Deliberately included are cases that are *shaped* like support tickets but sit
 # in a domain the corpus has never seen (tractor_hydraulics, bike_brakes). Those

@@ -7,7 +7,7 @@ with a magic 0.7 nobody can defend, so it is derived here.
 
 Three populations, not two:
 
-  real tickets  - val split, written by the corpus generator. This is the shape
+  corpus tickets - val split, written by the corpus generator. This is the shape
                   the tool receives in production, where a webhook delivers an
                   actual ticket, and it is what the floor is calibrated on.
   handwritten + - evals/abstention_queries.yaml, expect: precedent. Unambiguously
@@ -22,7 +22,7 @@ control that separates the two effects - and they turn out to be about the same
 size, which is the finding this stage exists to surface.
 
 Rule: sit halfway between the highest-scoring off-topic query and the 5th
-percentile of real tickets. Then report, rather than hide, how many handwritten
+percentile of corpus tickets. Then report, rather than hide, how many handwritten
 on-topic queries that floor wrongly rejects.
 """
 
@@ -52,6 +52,7 @@ OUT_REPORT = ROOT / "reports" / "calibration.md"
 
 N_REAL = 400
 SWEEP = [0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.60]
+ALT = 0.40   # the permissive alternative the report contrasts the floor with
 SEED = 11
 
 
@@ -97,14 +98,14 @@ def main() -> None:
         "",
         "| population | n | mean | min | max |",
         "|------------|--:|-----:|----:|----:|",
-        f"| real tickets (generated) | {len(real)} | {real.mean():.3f} | {real.min():.3f} | {real.max():.3f} |",
+        f"| corpus tickets (generated, held out) | {len(real)} | {real.mean():.3f} | {real.min():.3f} | {real.max():.3f} |",
         f"| handwritten, on topic | {len(positive)} | {positive.mean():.3f} | {positive.min():.3f} | {positive.max():.3f} |",
         f"| handwritten, off topic | {len(negative)} | {negative.mean():.3f} | {negative.min():.3f} | {negative.max():.3f} |",
         "",
         f"**Chosen floor: {floor:.2f}** - midpoint of the off-topic ceiling ({ceiling:.3f}) "
-        f"and the real-ticket 5th percentile ({p5:.3f}).",
+        f"and the corpus-ticket 5th percentile ({p5:.3f}).",
         "",
-        "| floor | real accepted | handwritten on-topic accepted | off-topic accepted |",
+        "| floor | corpus accepted | handwritten on-topic accepted | off-topic accepted |",
         "|------:|--------------:|------------------------------:|-------------------:|",
     ]
     for t in sorted({*SWEEP, floor}):
@@ -130,9 +131,9 @@ def main() -> None:
         "paraphrase of the ticket already sits in the index, are not separated here.",
         "",
         f"So the floor is right for the input shape it was calibrated on, and wrong for "
-        f"any other. On real tickets - the production shape, where a webhook delivers an "
-        f"actual ticket - it accepts {100 * (real >= floor).mean():.1f}% and rejects "
-        f"{100 * (1 - (negative >= floor).mean()):.0f}% of off-topic queries. Applied to a "
+        f"any other. On corpus tickets - the shape a webhook delivers - it accepts "
+        f"{100 * (real >= floor).mean():.1f}% and rejects {int((negative < floor).sum())} of the "
+        f"{len(negative)} off-topic queries it was fitted against. Applied to a "
         f"hand-typed question it wrongly rejects **{100 * false_reject:.0f}%** of "
         f"legitimate on-topic ones.",
         "",
@@ -142,9 +143,10 @@ def main() -> None:
         "",
         f"**The two populations genuinely overlap**, so no floor satisfies both: accepting "
         f"every on-topic query needs a floor at or below {positive.min():.3f}, and rejecting "
-        f"every off-topic one needs it above {negative.max():.3f}. 0.40 is the visible "
-        f"alternative - it accepts 100% of both legitimate populations and lets through 1 "
-        f"of {len(negative)} off-topic queries. {floor:.2f} is the conservative end of that "
+        f"every off-topic one needs it above {negative.max():.3f}. {ALT:.2f} is the visible "
+        f"alternative: it accepts {(real >= ALT).mean():.0%} of corpus tickets and "
+        f"{(positive >= ALT).mean():.0%} of handwritten on-topic questions, and lets through "
+        f"{int((negative >= ALT).sum())} of {len(negative)} off-topic queries. {floor:.2f} is the conservative end of that "
         "trade, chosen because a confidently wrong draft costs more than a refusal. Which "
         "end to sit at is a decision for whoever owns the support queue, not a "
         "property of the data.",
@@ -156,8 +158,9 @@ def main() -> None:
         "",
         "## Caveats",
         "",
-        f"- The off-topic column is measured on {len(negative)} handwritten queries. A 0% "
-        f"cell means zero of {len(negative)}, which bounds the true rate only loosely "
+        f"- The off-topic column is measured on the same {len(negative)} handwritten queries "
+        f"the floor was fitted against, so its 0% at the floor is in-sample. Zero of "
+        f"{len(negative)} bounds the true rate only loosely "
         f"(95% upper bound around {100 * (1 - 0.05 ** (1 / len(negative))):.0f}%).",
         f"- The on-topic set is {len(positive)} cases, and its minimum ({positive.min():.3f}) "
         f"overlaps the off-topic maximum ({negative.max():.3f}). No separate handwritten "

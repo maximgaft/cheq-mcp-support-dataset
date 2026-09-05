@@ -45,6 +45,13 @@ so a duplicated neighbour inflates it with evidence that is not there.
 """
 
 
+def shown(similarity: float, floor: float) -> str:
+    """A similarity for a sentence that compares it to the floor: three decimals,
+    or four when three would round it up to the floor and make the sentence read
+    as a contradiction (0.4696 is below 0.47; "0.470" does not look like it)."""
+    return f"{similarity:.4f}" if round(similarity, 3) >= floor else f"{similarity:.3f}"
+
+
 def collapse_duplicates(positions: np.ndarray, vectors: np.ndarray,
                         keep: int, threshold: float = NEAR_DUPLICATE) -> np.ndarray:
     """Greedily keep hits that are not near-duplicates of an already-kept hit.
@@ -116,7 +123,10 @@ class Index:
 
     def search(self, text: str, k: int, *, queue: str | None = None,
                language: str | None = None) -> tuple[list[dict], float]:
-        """Return the k nearest tickets and the top similarity."""
+        """Return the k nearest tickets and the top similarity, both at full precision.
+
+        Callers round for display only. Rounding before a threshold moves the
+        decision: 0.4696 would pass a 0.47 floor as 0.470."""
         sims = self.vectors @ self.embed(text)
 
         mask = None
@@ -142,7 +152,7 @@ class Index:
             row = self.meta.iloc[position]
             hits.append({
                 "ticket_id": row.ticket_id,
-                "similarity": round(float(sims[position]), 3),
+                "similarity": float(sims[position]),
                 "queue": row.queue,
                 "priority": row.priority,
                 "type": row.type,
@@ -217,7 +227,7 @@ class Index:
         if top < self.floor:
             by_similarity = by_agreement = None
             guidance = (
-                f"The nearest ticket scores {top:.3f}, below the {self.floor} abstention "
+                f"The nearest ticket scores {shown(top, self.floor)}, below the {self.floor} abstention "
                 "floor - there is no usable neighbourhood here, so neither confidence "
                 "figure applies and both are withheld. Route this to a human. Note that "
                 "neighbours can still appear to agree at this range: agreement ignores "
@@ -227,7 +237,7 @@ class Index:
               and abs(by_similarity - by_agreement) > GUIDANCE_GAP):
             guidance = (
                 f"The two confidence figures differ ({by_similarity:.2f} by similarity, "
-                f"{by_agreement:.2f} by agreement). That is common on real tickets and "
+                f"{by_agreement:.2f} by agreement). They measure different things, and a gap "
                 "does not indicate a bad input; the lower figure is the conservative read. "
                 "Check the neighbours below."
             )
@@ -243,7 +253,7 @@ class Index:
             "voted_over": self.vote_k,
             "neighbours": [
                 {"ticket_id": h["ticket_id"], "queue": h["queue"],
-                 "priority": h["priority"], "similarity": h["similarity"],
+                 "priority": h["priority"], "similarity": round(h["similarity"], 3),
                  "voted": i < self.vote_k}
                 for i, h in enumerate(hits)
             ],

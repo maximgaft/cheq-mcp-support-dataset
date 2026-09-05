@@ -3,7 +3,7 @@
 :root { --fs: 8.8pt; }
 @page { size: A4; margin: 8mm 9mm; }
 * { box-sizing: border-box; }
-body { font: var(--fs)/1.25 "Helvetica Neue", Arial, sans-serif; color: #16181d; margin: 0; }
+body { font: var(--fs)/1.22 "Helvetica Neue", Arial, sans-serif; color: #16181d; margin: 0; }
 .head { border-bottom: 1.5px solid #16181d; padding-bottom: 4px; margin-bottom: 6px; }
 .head h1 { font-size: 15pt; margin: 0 0 2px; letter-spacing: -.2px; }
 .head p { margin: 0; font-size: 9.6pt; color: #333; }
@@ -26,57 +26,57 @@ td.l { width: 19%; font-weight: 600; color: #000; padding-right: 8px; }
 </style>
 <div class="head">
   <h1>Support-ticket MCP server</h1>
-  <p>Answers questions about 40,047 support tickets, says which ones the data cannot answer, and finds that half of the archive's first replies wasted a round trip.</p>
+  <p>Answers questions about 40,047 support tickets, says which ones the data cannot answer, and finds that half of the archive's first replies ask for details without naming any.</p>
 </div>
 
 <div class="cols">
 <section><h2>A. Design</h2>
-<p>Four MCP tools over stdio and no LLM in the server: the host supplies the model, the server supplies grounded facts and refusals. Corpus: <span class="n">40,047</span> bilingual (en/de) tickets from <span class="k">Tobi-Bueck/customer-support-tickets</span>, customer message, first reply, queue label. It is synthetic, built for classifier training.</p>
+<p>Four MCP tools over stdio and no LLM in the server: the host supplies the model; the server, grounded facts and refusals. Corpus: <span class="n">40,047</span> bilingual (en/de) tickets from <span class="k">Tobi-Bueck/customer-support-tickets</span>, customer message, first reply, queue label. It is synthetic, built for classifier training.</p>
 <ul>
 <li><span class="k">get_schema</span>: columns, their values, where the rows came from (61,765 downloaded, 40,047 served), and an explicit <span class="k">cannot_answer</span> list (no timestamps, customer ID, assignee or money), so the host refuses instead of confabulating.</li>
 <li><span class="k">run_sql</span>: one read-only SELECT against DuckDB.</li>
 <li><span class="k">find_similar_tickets</span>: <span class="k">multilingual-e5-small</span>, mean-centred (unrelated pairs score ~0, not ~0.8); exact search over <span class="n">31,625</span> train-split vectors. Below a <span class="n">0.47</span> floor: <span class="k">has_precedent: false</span>. Every hit carries <span class="k">reply_state</span>.</li>
 <li><span class="k">suggest_routing</span>: k=1 nearest-neighbour vote (k swept on val; larger k floods small queues), with two confidence figures, top-1 similarity and top-3 agreement, fitted on validation and checked on test.</li>
 </ul>
-<p>Fetch, eight stages, DuckDB and index: ~80s, deterministic, offline. Every threshold and metric the tools state is rendered from the build's files. Nothing here governs whether the host calls a tool, only what it gets back.</p></section>
+<p>Fetch once; eight stages rebuild DuckDB and the index in ~80s, deterministic, offline after that. Every threshold and metric the tools state comes from the build's files. Nothing here governs whether the host calls a tool, only what it gets back.</p></section>
 
 <section><h2>B. Why</h2>
-<p><b>Support over Churn</b> because Churn is one numeric table and SQL over it is solved; tickets are text plus fields, so retrieval fits the text, SQL fits the fields, and the host chooses. Three things deliberately avoided:</p>
+<p><b>Support over Churn</b> because Churn is one numeric table and SQL over it is solved; tickets are text plus fields, so retrieval fits the text, SQL fits the fields, and the host chooses.</p>
 <ul>
-<li><b>An LLM server-side.</b> The host already has one. A second would double the cost per call and make every tool non-deterministic and unevaluable. The one LLM pass, labelling 39,739 first replies as dead end or not (E), ran once; its output is committed.</li>
-<li><b>A fine-tuned classifier.</b> It would likely score higher, but returns a softmax with no evidence. kNN returns the neighbours, so a user can check the answer, and neighbour agreement becomes a second confidence signal.</li>
-<li><b>A reranker.</b> The bias that suggested one was a bug: <span class="k">subject + body</span> over-ranked subject-less tickets 2.6×; embedding the body alone removed it.</li>
+<li><b>Avoided: an LLM server-side.</b> The host already has one; a second would double cost per call and make every tool non-deterministic and unevaluable. The one LLM pass, labelling 39,739 first replies as dead end or not (E), ran once and its output is committed.</li>
+<li><b>Avoided: a fine-tuned classifier.</b> It would likely score higher but returns a softmax with no evidence; kNN returns neighbours a user can check, and their agreement is a second confidence signal.</li>
+<li><b>Avoided: a reranker.</b> <span class="k">subject + body</span> over-ranked subject-less tickets 2.6×; embedding the body alone removed it.</li>
 </ul></section>
 
 <section><h2>C. Production</h2>
 <p>The four tool contracts stay; everything beneath them changes.</p>
 <ul>
 <li><b>Source.</b> CSVs → DuckDB becomes Zendesk/Jira → Snowflake. The index rebuilds on an Airflow schedule and the corpus-relative floor recalibrates with it.</li>
-<li><b>Transport.</b> stdio → streamable HTTP: same tool code, second entrypoint, and where a <span class="k">draft_reply</span> tool would live, since a webhook has no host model.</li>
+<li><b>Transport.</b> stdio → streamable HTTP: same tool code, second entrypoint; a <span class="k">draft_reply</span> tool lives there, since a webhook has no host model.</li>
 <li><b>Access control.</b> None today. In production, SQL is covered by Snowflake row-access policies <i>if the HTTP entrypoint opens the session with the caller's own SSO token</i>. The vector index is a copy of rows outside that boundary, so re-gate it: resolve the caller's scope, mask the index, then take top-k. Post-filtering leaks existence and guts top-k for narrow scopes.</li>
-<li><b>Recency.</b> Weight the ranking by age, do not exclude: a three-year-old precedent may describe a dead product.</li>
-<li><b>Scale.</b> Brute force measures 0.4 ms at 32k vectors and stays under 10 ms to about a million; an approximate index adds an error inseparable from the embedding's own, so not before.</li>
+<li><b>Scale.</b> Brute force: 0.4 ms at 32k vectors, under 10 ms to about a million; an approximate index adds an error inseparable from the embedding's own.</li>
 </ul></section>
 </div>
 
 <section class="span"><h2>D. Risks</h2>
 <table>
-<tr><td class="l">An agent drafts a reply with no real precedent</td><td>Floor <span class="n">0.47</span>, fitted on validation: accepts <span class="n">97.8%</span> of real tickets, rejects 20 of 20 off-topic queries. Below it, no draft material. Typed questions score ~0.18 lower than tickets whatever their topic, partly because they are shorter, so for them the floor is advisory.</td></tr>
-<tr><td class="l">A confidence figure is over-trusted</td><td>Both fitted on validation and checked on test: in the upper bands similarity holds within 0.006 while agreement runs 0.034 high, so the tool calls that one a ceiling. When they differ by &gt;0.15 the response names the lower as the conservative read.</td></tr>
-<tr><td class="l">Source language label wrong on 10% of rows</td><td><span class="n">4,204</span> tickets labelled <span class="k">de</span> carry English text. <span class="k">language</span> is re-detected from the text; the original stays as <span class="k">language_label</span> so the defect is queryable.</td></tr>
-<tr><td class="l">Silently wrong tag aggregates</td><td>Positional <span class="k">tag_1..8</span> make <span class="k">GROUP BY tag_1</span> run clean and wrong. Not served; <span class="k">ticket_tags</span> holds one row per (ticket, tag). The wrong query is unwritable, not discouraged.</td></tr>
+<tr><td class="l">An agent drafts a reply with no real precedent</td><td>Floor <span class="n">0.47</span>, fitted on 400 validation tickets outside the index: accepts <span class="n">97.8%</span> of them and rejects the 20 off-topic queries it was fitted against, both in-sample. Below it, hits come back for context, not as draft material. Typed questions score ~0.18 lower whatever their topic, partly because they are shorter, so for them the floor is advisory.</td></tr>
+<tr><td class="l">A confidence figure is over-trusted</td><td>Both queue figures, fitted on validation and checked on test: in the upper bands similarity holds within 0.006, agreement runs 0.034 high, so the tool calls that one a ceiling; when they differ by &gt;0.15 (half of test tickets) it names the lower as the conservative read. Priority has no confidence figure (macro-F1 0.766).</td></tr>
+<tr><td class="l">Source language label wrong on 10% of rows</td><td><span class="n">4,204</span> tickets labelled <span class="k">de</span> carry English text. <span class="k">language</span> is re-detected from the text; the original stays as <span class="k">language_label</span>.</td></tr>
+<tr><td class="l">Silently wrong tag aggregates</td><td>Positional <span class="k">tag_1..8</span> make <span class="k">GROUP BY tag_1</span> run clean and wrong; they are not served, and <span class="k">ticket_tags</span> holds one row per (ticket, tag), so the wrong query is unwritable.</td></tr>
 <tr><td class="l">SQL reads files or mutates</td><td>Read-only, external access off, config locked, one SELECT via the parser, a cursor and limits per call. Capability removed, not names blacklisted. Residual: metadata functions reveal the database path.</td></tr>
-<tr><td class="l">Memorised test set inflates scores</td><td>8,357 tickets appear in both multi-language files; split first and ~28% of test has a twin in training, so dedup precedes the split and the index holds train only. Beyond exact copies, <span class="n">55%</span> of test tickets have a paraphrase in the index; on the rest, macro-F1 is 0.414. Routing is partly lookup.</td></tr>
-<tr><td class="l">German quietly worse than English</td><td><span class="n">0.782</span> en / <span class="n">0.542</span> de macro-F1. Coverage, not the encoder: retrieval is monolingual (96% of German queries' nearest neighbour is German) and the German slice of the index is 2.3× smaller; English cut to that size scores 0.545. Fix: more German tickets, not a bigger model.</td></tr>
+<tr><td class="l">Memorised test set inflates scores</td><td>8,357 tickets appear in both multi-language files; split first and ~28% of test has a twin in training, so dedup precedes the split and the index holds train only. Beyond those, <span class="n">55%</span> of test tickets have a paraphrase in the index; on the rest, macro-F1 is 0.414.</td></tr>
+<tr><td class="l">German quietly worse than English</td><td><span class="n">0.782</span> en / <span class="n">0.542</span> de macro-F1. Coverage, not the encoder: retrieval is monolingual (96% of German queries' nearest neighbour is German) and the German index slice is 2.3× smaller; English cut to that size scores 0.545. Fix: more German tickets, not a bigger model.</td></tr>
+<tr><td class="l">Prompt injection via ticket text</td><td>Retrieved text is untrusted: the server only embeds and returns it, and the tool description tells the host to read it as data, not instructions. Authorisation would live server-side (C), never with the model.</td></tr>
 </table></section>
 
 <div class="cols">
 <section><h2>E. Business impact</h2>
 <p>Value is elapsed time, not agent minutes: a ticket settled in one exchange costs hours, one that needs three costs days, and the first reply decides which. <i>"Send the system logs and your account number"</i> can be acted on. <i>"Please provide details"</i> cannot.</p>
-<p><b><span class="n">49.8%</span> of first replies in this archive are the second kind</b>: they neither resolve the ticket nor name anything fetchable. <i>(Haiku 4.5 over 39,739 answers, $9.53; on the 40 I read by hand, model and reader both count 22 dead ends.)</i> The archive is synthetic, so the rate describes the generator. What transfers is the measurement: the same labeller over CHEQ's real first replies gives the true rate in a day; <span class="k">reply_state</span> on every precedent lets a draft copy the replies that ended the exchange, not the ones that extended it.</p>
-<p><b>At CHEQ, two uses of one pattern.</b> Support agents draft first replies from precedent over CHEQ's own archive (C, Source), with the dead-end rate before and after as the first business number. And the Data &amp; AI team puts internal Snowflake data behind Claude for stakeholders (a CSM asking why an account's invalid-traffic share jumped) with this server as the template: refuse what the data can't answer, fit every threshold on held-out data, publish the confidence next to the label, so stakeholders trust numbers the data team did not hand-check.</p></section>
+<p><b><span class="n">49.8%</span> of first replies in this archive are the second kind</b>: they neither resolve the ticket nor name anything fetchable. <i>(Haiku 4.5 over 39,739 answers, $9.53; on the 40 I read by hand, model and reader both count 22 dead ends.)</i> The archive is synthetic and the label a text proxy, so this is the pilot's hypothesis: a dead-end first reply costs an extra exchange, which thread length and resolution time on real tickets would test. The same labeller over CHEQ's own first replies gives its rate in a day; <span class="k">reply_state</span> on every precedent lets a draft copy the replies the label calls resolved or actionable, not the dead ends.</p>
+<p><b>At CHEQ, two uses of one pattern.</b> Support agents draft first replies from precedent over CHEQ's own archive (C, Source), with the dead-end rate before and after as the first business number. And the Data &amp; AI team puts internal Snowflake data behind Claude for stakeholders (a CSM asking why an account's invalid-traffic share jumped) with this server as the template: refuse what the data can't answer, fit every threshold on held-out data, publish the confidence next to the label, so stakeholders can trust numbers nobody hand-checked.</p></section>
 </div>
 
 <div class="foot">
-<b>Runs, evaluates and tests offline.</b> Routing <span class="n">0.707</span> macro-F1 over 10 queues against 0.045 for always answering the largest queue · <span class="k">make build</span> 80s · <span class="k">make eval</span> 30s · <span class="k">make test</span> 2s · every evaluation number here is generated into <span class="k">reports/</span>.
+<b>Routing <span class="n">0.707</span> macro-F1</b> over 10 queues against 0.045 for always answering the largest queue · runs, evaluates and tests offline after one build · every evaluation metric here is generated into <span class="k">reports/</span>.
 </div>

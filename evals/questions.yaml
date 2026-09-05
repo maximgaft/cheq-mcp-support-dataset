@@ -104,6 +104,24 @@
   sql: SELECT count(*) FROM tickets WHERE split = 'train' AND is_indexable
   expect: [31625]
 
+- id: german_share_by_queue
+  question: Among queues with at least 1,000 tickets, which has the largest share of German tickets? Give count, denominator and percentage.
+  kind: sql
+  sql: SELECT queue, count(*) FILTER (WHERE language = 'de') AS de, count(*) AS n, round(100.0 * count(*) FILTER (WHERE language = 'de') / count(*), 1) AS pct FROM tickets GROUP BY 1 HAVING count(*) >= 1000 ORDER BY pct DESC LIMIT 1
+  expect: [Sales and Pre-Sales, 423, 1244, 34.0]
+
+- id: german_high_priority_share
+  question: What percentage of German tickets are high priority?
+  kind: sql
+  sql: SELECT count(*) FILTER (WHERE priority = 'high') AS high, count(*) AS n, round(100.0 * count(*) FILTER (WHERE priority = 'high') / count(*), 1) AS pct FROM tickets WHERE language = 'de'
+  expect: [4858, 12230, 39.7]
+
+- id: top_tags_high_priority
+  question: Across all high-priority tickets, what are the top three tags by number of distinct tickets?
+  kind: sql
+  sql: SELECT tg.tag, count(DISTINCT t.ticket_id) AS tickets FROM tickets t JOIN ticket_tags tg USING (ticket_id) WHERE t.priority = 'high' GROUP BY 1 ORDER BY 2 DESC LIMIT 3
+  expect_rows: [[IT, 7446], [Tech Support, 7413], [Performance, 6642]]
+
 - id: agent_performance
   question: Which agent closes the most tickets?
   kind: refuse

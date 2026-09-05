@@ -15,6 +15,7 @@ import functools
 import numpy as np
 
 MODEL_NAME = "intfloat/multilingual-e5-small"
+MODEL_REVISION = "614241f622f53c4eeff9890bdc4f31cfecc418b3"   # pinned: a silent upstream change would move every number
 DIM = 384
 
 
@@ -32,9 +33,9 @@ def load_model():
     # Cached weights are used without asking the Hub whether they changed - the
     # server promises no network at query time. Only a cold cache downloads.
     try:
-        return SentenceTransformer(MODEL_NAME, device=device, local_files_only=True)
+        return SentenceTransformer(MODEL_NAME, device=device, revision=MODEL_REVISION, local_files_only=True)
     except OSError:
-        return SentenceTransformer(MODEL_NAME, device=device)
+        return SentenceTransformer(MODEL_NAME, device=device, revision=MODEL_REVISION)
 
 
 def document_text(subject: str | None, body: str) -> str:

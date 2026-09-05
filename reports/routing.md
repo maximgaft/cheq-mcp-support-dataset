@@ -105,7 +105,7 @@ Similarity is better within a fixed input shape and *not comparable across shape
 
 Near-duplicate hits are collapsed before agreement is counted (doc-doc similarity 0.85), so "three neighbours agree" means three distinct tickets. On val, uncollapsed agreement scores AUC 0.664 against 0.642 collapsed. Duplicated neighbours also signal a dense, well-covered region, which correlates with being right, so the uncollapsed signal can look like the better predictor while partly measuring an artifact that better deduplication would remove. The collapsed figure is the one published.
 
-So `suggest_routing` returns both. When they disagree, the neighbours are listed so the caller can look rather than guess.
+So `suggest_routing` returns both. They differ by more than 0.15 on 50% of test tickets above the floor, so a gap says nothing about the input on its own; when they differ, the neighbours are listed so the caller can look rather than guess.
 
 ## Where the errors are
 

@@ -89,7 +89,15 @@ def test_without_metrics_file_falls_back(tmp_path):
 def test_search_ranks_by_similarity_and_collapses_the_twin(idx):
     hits, top = idx.search("1.0", k=3)
     assert [h["ticket_id"] for h in hits] == ["t0", "t1", "t2"]   # t5 collapsed into t0
-    assert top == hits[0]["similarity"] == 0.9
+    assert top == hits[0]["similarity"] == pytest.approx(0.9)      # full precision, not rounded
+
+
+def test_decisions_use_full_precision_not_the_rounded_display(idx):
+    r = idx.route(str(0.4696 / 0.9))   # top 0.4696 displays as 0.470 but is below the 0.47 floor
+    assert r["top_similarity"] == 0.47 and r["expected_accuracy"] is None
+    assert "0.4696" in r["guidance"] and "0.470" not in r["guidance"]   # the sentence stays true
+    r = idx.route(str(0.7996 / 0.9))   # top 0.7996 displays as 0.800 but sits in the 0.6-0.8 band
+    assert r["top_similarity"] == 0.8 and r["expected_accuracy"] == 0.67
 
 
 def test_search_filters(idx):

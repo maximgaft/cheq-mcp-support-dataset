@@ -115,8 +115,10 @@ def test_row_cap_and_more_rows_flag(con):
 def test_character_budget_stops_early(con):
     out = db.run(con, "SELECT repeat('y', 15000) FROM range(5)")
     assert out["row_count"] < 5 and "character" in out["truncated"]
-    # A single row over the budget is still returned rather than an empty result.
-    assert db.run(con, "SELECT repeat('y', 50000)")["row_count"] == 1
+    # A single row over the budget comes back with its longest cell cut to fit, and says so.
+    lone = db.run(con, "SELECT repeat('y', 1000000)")
+    assert lone["row_count"] == 1 and "cut" in lone["truncated"]
+    assert len(lone["rows"][0][0]) <= db.MAX_TOTAL_CHARS and lone["rows"][0][0].endswith("budget]")
 
 
 def test_watchdog_cancels_and_connection_survives(con, monkeypatch):
