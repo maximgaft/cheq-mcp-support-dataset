@@ -1,0 +1,120 @@
+# Grader-style questions, the SQL a host would write from get_schema, and the
+# answer the built database gives. evals/check_questions.py runs each through the
+# same guard the server uses and fails if an answer moves. It is a regression
+# check on the data build and a worked example of question -> SQL -> answer that
+# needs no model to reproduce.
+#
+#   kind: sql     `sql` runs through server.db.run; `expect` is the first row
+#   kind: refuse  no SQL can answer it; `expect` is a phrase that must appear in
+#                 get_schema's cannot_answer list
+
+- id: total_tickets
+  question: How many tickets are there?
+  kind: sql
+  sql: SELECT count(*) FROM tickets
+  expect: [40047]
+
+- id: largest_queue
+  question: Which queue has the most tickets?
+  kind: sql
+  sql: SELECT queue, count(*) AS n FROM tickets GROUP BY 1 ORDER BY 2 DESC LIMIT 1
+  expect: [Technical Support, 11718]
+
+- id: queues_over_1000
+  question: How many queues have more than 1,000 tickets?
+  kind: sql
+  sql: SELECT count(*) FROM (SELECT queue FROM tickets GROUP BY 1 HAVING count(*) > 1000)
+  expect: [8]
+
+- id: german_share
+  question: What share of tickets are in German?
+  kind: sql
+  sql: SELECT round(100.0 * count(*) FILTER (WHERE language = 'de') / count(*), 1) FROM tickets
+  expect: [30.5]
+
+- id: high_billing_de
+  question: How many high-priority Billing tickets are in German?
+  kind: sql
+  sql: SELECT count(*) FROM tickets WHERE queue = 'Billing and Payments' AND priority = 'high' AND language = 'de'
+  expect: [355]
+
+- id: top_tag_high_billing
+  question: Which tag appears most in high-priority Billing tickets?
+  kind: sql
+  sql: SELECT tg.tag, count(DISTINCT t.ticket_id) AS tickets FROM tickets t JOIN ticket_tags tg USING (ticket_id) WHERE t.queue = 'Billing and Payments' AND t.priority = 'high' GROUP BY 1 ORDER BY 2 DESC LIMIT 1
+  expect: [Billing, 665]
+
+- id: distinct_tags
+  question: How many distinct tags are there?
+  kind: sql
+  sql: SELECT count(DISTINCT tag) FROM ticket_tags
+  expect: [1885]
+
+- id: tags_per_ticket
+  question: How many tags does a ticket carry on average?
+  kind: sql
+  sql: SELECT round(count(*) * 1.0 / count(DISTINCT ticket_id), 2) FROM ticket_tags
+  expect: [5.03]
+
+- id: priority_top
+  question: Which priority is most common?
+  kind: sql
+  sql: SELECT priority, count(*) AS n FROM tickets GROUP BY 1 ORDER BY 2 DESC LIMIT 1
+  expect: [medium, 16262]
+
+- id: language_top
+  question: Which language has more tickets, and how many?
+  kind: sql
+  sql: SELECT language, count(*) AS n FROM tickets GROUP BY 1 ORDER BY 2 DESC LIMIT 1
+  expect: [en, 27817]
+
+- id: largest_de_queue
+  question: Which queue is largest among German tickets?
+  kind: sql
+  sql: SELECT queue, count(*) AS n FROM tickets WHERE language = 'de' GROUP BY 1 ORDER BY 2 DESC LIMIT 1
+  expect: [Technical Support, 3568]
+
+- id: no_subject
+  question: How many tickets have no subject?
+  kind: sql
+  sql: SELECT count(*) FROM tickets WHERE subject IS NULL
+  expect: [4104]
+
+- id: type_top
+  question: What is the most common ticket type?
+  kind: sql
+  sql: SELECT type, count(*) AS n FROM tickets GROUP BY 1 ORDER BY 2 DESC LIMIT 1
+  expect: [Incident, 16082]
+
+- id: dead_end_share
+  question: What share of labelled first replies are dead ends? (325 tickets have no label and are excluded)
+  kind: sql
+  sql: SELECT round(100.0 * count(*) FILTER (WHERE reply_state = 'dead_end') / count(reply_state), 1) FROM tickets
+  expect: [49.8]
+
+- id: mislabelled_language
+  question: How many tickets did the source label German although the text is English?
+  kind: sql
+  sql: SELECT count(*) FROM tickets WHERE language_label = 'de' AND language = 'en'
+  expect: [4204]
+
+- id: indexed_tickets
+  question: How many tickets does find_similar_tickets search?
+  kind: sql
+  sql: SELECT count(*) FROM tickets WHERE split = 'train' AND is_indexable
+  expect: [31625]
+
+- id: agent_performance
+  question: Which agent closes the most tickets?
+  kind: refuse
+  expect: no assignee
+
+- id: volume_trend
+  question: How has ticket volume changed month over month?
+  kind: refuse
+  expect: no timestamps
+
+- id: churn_link
+  question: Which customers are most likely to churn?
+  kind: refuse
+  expect: no customer identifier
