@@ -17,8 +17,8 @@ import pandas as pd
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "pipeline"))
-from label import collapse  # noqa: E402
+sys.path.insert(0, str(ROOT))
+from pipeline.label import collapse  # noqa: E402
 
 GOLD = ROOT / "evals" / "answer_labels.yaml"
 LABELS = ROOT / "data" / "answer_labels.parquet"

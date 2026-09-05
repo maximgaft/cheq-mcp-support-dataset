@@ -33,10 +33,10 @@ from pathlib import Path
 import duckdb
 import pandas as pd
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from label import collapse  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from pipeline.label import collapse  # noqa: E402
 
-SOURCES = importlib.import_module("01_load").SOURCES
+SOURCES = importlib.import_module("pipeline.01_load").SOURCES
 
 DATA = Path(__file__).resolve().parents[1] / "data"
 LOADED = DATA / "interim" / "01_loaded.parquet"

@@ -35,11 +35,9 @@ import pandas as pd
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "pipeline"))
 sys.path.insert(0, str(ROOT))
 
-from embedding import center, document_text, embed_queries  # noqa: E402
-
+from pipeline.embedding import center, document_text, embed_queries  # noqa: E402
 from server import db  # noqa: E402
 from server.retrieval import Index, collapse_duplicates  # noqa: E402
 

@@ -5,6 +5,7 @@ has depend on which file it came from. We tag each row with its source and let
 later stages filter on that, rather than on row position.
 """
 
+import sys
 from pathlib import Path
 
 import pandas as pd
@@ -22,6 +23,9 @@ EXPECTED_ROWS = 61_765
 
 
 def main() -> None:
+    missing = [f for f in SOURCES.values() if not (DATA / f).exists()]
+    if missing:
+        sys.exit(f"  missing {', '.join(missing)} - run `make fetch` (pipeline/00_fetch.py) first")
     frames = []
     for source, filename in SOURCES.items():
         # dtype=str so pandas never guesses a type at this stage; later stages cast

@@ -29,7 +29,12 @@ def load_model():
         device = "cuda"
     else:
         device = "cpu"
-    return SentenceTransformer(MODEL_NAME, device=device)
+    # Cached weights are used without asking the Hub whether they changed - the
+    # server promises no network at query time. Only a cold cache downloads.
+    try:
+        return SentenceTransformer(MODEL_NAME, device=device, local_files_only=True)
+    except OSError:
+        return SentenceTransformer(MODEL_NAME, device=device)
 
 
 def document_text(subject: str | None, body: str) -> str:

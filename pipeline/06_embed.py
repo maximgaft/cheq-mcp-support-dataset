@@ -19,8 +19,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from embedding import (
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from pipeline.embedding import (  # noqa: E402
     DIM,
     MODEL_NAME,
     center,
@@ -52,7 +52,10 @@ def main() -> None:
     print(f"\n  unrelated-pair similarity: raw {(raw[i] * raw[j]).sum(1).mean():+.3f}"
           f"  ->  centred {(vectors[i] * vectors[j]).sum(1).mean():+.3f}   (want ~0)")
 
-    np.savez_compressed(OUT, ticket_id=train.ticket_id.to_numpy(), vectors=vectors, mean=mean)
+    # ticket_id as a fixed-width string array, not a pandas object array, so the
+    # file loads without allow_pickle.
+    np.savez_compressed(OUT, ticket_id=np.asarray(train.ticket_id, dtype=str),
+                        vectors=vectors, mean=mean)
     print(f"  {vectors.nbytes / 1e6:.1f} MB in memory, wrote {OUT.relative_to(DATA.parent)}")
 
     print("\n  nearest-neighbour spot check (3 held-out queries):")

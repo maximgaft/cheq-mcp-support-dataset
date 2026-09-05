@@ -34,8 +34,13 @@ import numpy as np
 import pandas as pd
 import yaml
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from embedding import MODEL_NAME, center, document_text, embed_query
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from pipeline.embedding import (  # noqa: E402
+    MODEL_NAME,
+    center,
+    document_text,
+    embed_query,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "data"
@@ -51,19 +56,26 @@ SEED = 11
 
 
 def main() -> None:
-    blob = np.load(INDEX, allow_pickle=True)
+    blob = np.load(INDEX)
     vectors, mean = blob["vectors"], blob["mean"]
 
     def top1(text: str) -> float:
         return float((vectors @ center(embed_query(text), mean)).max())
 
     cases = yaml.safe_load(CASES.read_text())
-    positive = np.array([top1(c["query"]) for c in cases if c["expect"] == "precedent"])
+    on_topic = [c["query"] for c in cases if c["expect"] == "precedent"]
+    positive = np.array([top1(q) for q in on_topic])
     negative = np.array([top1(c["query"]) for c in cases if c["expect"] == "no_precedent"])
 
     val = pd.read_parquet(SPLIT)
     val = val[val.split.eq("val")].sample(N_REAL, random_state=SEED)
     real = np.array([top1(document_text(r.subject, r.body)) for _, r in val.iterrows()])
+    # The same tickets cut to the handwritten queries' median length. Handwritten
+    # queries are short as well as human-written, so this bounds how much of the
+    # gap could be length. Truncation also drops content, so it is a rough attribution.
+    short_words = int(np.median([len(q.split()) for q in on_topic]))
+    short = np.array([top1(" ".join(document_text(r.subject, r.body).split()[:short_words]))
+                      for _, r in val.iterrows()])
 
     greeting = top1("Dear Customer Support Team, I hope this message finds you well.")
     ceiling = float(negative.max())
@@ -72,6 +84,8 @@ def main() -> None:
 
     provenance_gap = float(real.mean() - positive.mean())
     topic_gap = float(positive.mean() - negative.mean())
+    length_gap = float(real.mean() - short.mean())
+    length_share = length_gap / provenance_gap if provenance_gap else float("nan")
     false_reject = float((positive < floor).mean())
 
     report = [
@@ -108,7 +122,12 @@ def main() -> None:
         f"{topic_gap:+.3f} above handwritten off-topic ones. But generated text also "
         f"scores {provenance_gap:+.3f} above handwritten text *regardless of topic*. "
         "Those two effects are comparable in magnitude, and a single threshold on "
-        "similarity cannot tell them apart.",
+        "similarity cannot tell them apart. Roughly "
+        f"{length_share:.0%} of the second effect is plausibly length: the same {N_REAL} "
+        f"tickets cut to the handwritten queries' median length ({short_words} words) score "
+        f"{short.mean():.3f}. Truncation also drops content and leaves fragments, so that "
+        "is a rough attribution rather than a clean length effect; style, and whether a "
+        "paraphrase of the ticket already sits in the index, are not separated here.",
         "",
         f"So the floor is right for the input shape it was calibrated on, and wrong for "
         f"any other. On real tickets - the production shape, where a webhook delivers an "
@@ -162,6 +181,9 @@ def main() -> None:
         "off_topic_accepted": round(float((negative >= floor).mean()), 4),
         "provenance_gap": round(provenance_gap, 4),
         "topic_gap": round(topic_gap, 4),
+        "short_words": short_words,
+        "real_short_mean": round(float(short.mean()), 4),
+        "length_share_of_gap": round(length_share, 4),
         "generated_by": "pipeline/07_calibrate.py",
     }, indent=2) + "\n")
     print(f"  wrote {OUT_JSON.relative_to(ROOT)} and {OUT_REPORT.relative_to(ROOT)}")

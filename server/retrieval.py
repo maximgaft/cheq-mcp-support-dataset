@@ -19,14 +19,12 @@ cannot find itself. That is what makes the measured numbers mean anything.
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "pipeline"))
-from pipeline.embedding import center, embed_query  # noqa: E402
+from pipeline.embedding import center, embed_query
 
 GUIDANCE_GAP = 0.15
 """Difference between the two fitted confidence figures above which route()
@@ -79,7 +77,10 @@ class Index:
 
     def __init__(self, npz_path: Path, thresholds_path: Path, con,
                  routing_metrics_path: Path | None = None) -> None:
-        blob = np.load(npz_path, allow_pickle=True)
+        try:
+            blob = np.load(npz_path)
+        except ValueError as exc:  # an index written before ticket_id became a string array
+            raise RuntimeError(f"{npz_path} predates this build - run `make build`") from exc
         self.ticket_id = blob["ticket_id"]
         self.vectors = blob["vectors"]
         self.mean = blob["mean"]
