@@ -29,7 +29,7 @@ evals/answer_labels.yaml first and prints agreement. Nothing is spent on the ful
 corpus unless you pass --all, so a broken prompt costs about a cent.
 
   uv run python pipeline/label.py            # gold set only, ~1 cent
-  uv run python pipeline/label.py --all      # full corpus, ~$7
+  uv run python pipeline/label.py --all      # full corpus, ~$10
 """
 
 from __future__ import annotations

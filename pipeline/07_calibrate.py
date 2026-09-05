@@ -2,7 +2,7 @@
 measure what it costs.
 
 The floor is the number `find_similar_tickets` compares against: above it, return
-precedents; below it, return no_precedent. Picking it by eye is how you end up
+precedents; below it, has_precedent: false. Picking it by eye is how you end up
 with a magic 0.7 nobody can defend, so it is derived here.
 
 Three populations, not two:

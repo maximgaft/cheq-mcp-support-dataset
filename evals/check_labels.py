@@ -48,6 +48,7 @@ def main() -> None:
                                 for k, s in zip(labels.kind, labels.ask_is_specific)])
     share = full.state.value_counts(normalize=True)
     mine_share = pd.Series(list(mine.values())).value_counts(normalize=True)
+    model_share_40 = pd.Series(list(model.values())).value_counts(normalize=True)
 
     lines = [
         "# Answer labels — agreement with the adjudicated set",
@@ -99,11 +100,12 @@ def main() -> None:
         "",
         "That confusion moves tickets *within* `dead_end` — a vague ask and a bare "
         "acknowledgement are both dead ends — so the dominant error cancels at the level "
-        "the business claim uses. Two independent estimates:",
+        "the business claim uses. On the same 40 tickets the model and the hand labels "
+        "produce the same dead-end count; corpus-wide the model says 49.8%:",
         "",
-        "| state | model, 39,739 | adjudicated, n=40 |",
-        "|---|---:|---:|",
-        *[f"| `{s}` | {100 * share.get(s, 0):.1f}% | {100 * mine_share.get(s, 0):.1f}% |"
+        "| state | model, 39,739 | model, same 40 | adjudicated, n=40 |",
+        "|---|---:|---:|---:|",
+        *[f"| `{s}` | {100 * share.get(s, 0):.1f}% | {100 * model_share_40.get(s, 0):.1f}% | {100 * mine_share.get(s, 0):.1f}% |"
           for s in ("dead_end", "actionable_ask", "resolved")],
         "",
         f"**About half of all first replies are dead ends** — they neither resolve the ticket "

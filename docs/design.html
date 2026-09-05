@@ -1,14 +1,14 @@
 <!doctype html><meta charset="utf-8"><title>Support Ticket MCP Server</title>
 <style>
-:root { --fs: 8.4pt; }
+:root { --fs: 8.8pt; }
 @page { size: A4; margin: 8mm 9mm; }
 * { box-sizing: border-box; }
-body { font: var(--fs)/1.24 "Helvetica Neue", Arial, sans-serif; color: #16181d; margin: 0; }
+body { font: var(--fs)/1.25 "Helvetica Neue", Arial, sans-serif; color: #16181d; margin: 0; }
 .head { border-bottom: 1.5px solid #16181d; padding-bottom: 4px; margin-bottom: 6px; }
-.head h1 { font-size: 14pt; margin: 0 0 2px; letter-spacing: -.2px; }
-.head p { margin: 0; font-size: 9pt; color: #444; }
+.head h1 { font-size: 15pt; margin: 0 0 2px; letter-spacing: -.2px; }
+.head p { margin: 0; font-size: 9.6pt; color: #333; }
 .cols { column-count: 2; column-gap: 6mm; }
-h2 { font-size: 9pt; margin: 6px 0 2px; text-transform: uppercase; letter-spacing: .5px;
+h2 { font-size: 9.4pt; margin: 6px 0 2px; text-transform: uppercase; letter-spacing: .5px;
      color: #0b4f6c; break-after: avoid; }
 .cols > section:first-child h2, .span h2 { margin-top: 0; }
 p, li { margin: 0 0 3px; }
@@ -26,59 +26,57 @@ td.l { width: 19%; font-weight: 600; color: #000; padding-right: 8px; }
 </style>
 <div class="head">
   <h1>Support-ticket MCP server</h1>
-  <p>Answers natural-language questions about 40,047 bilingual support tickets — and knows which it cannot answer.</p>
+  <p>Answers questions about 40,047 support tickets, says which ones the data cannot answer, and finds that half of the archive's first replies wasted a round trip.</p>
 </div>
 
 <div class="cols">
 <section><h2>A. Design</h2>
-<p>Four MCP tools over stdio, no LLM server-side. Corpus: <span class="n">40,047</span> bilingual (en/de) tickets from <span class="k">Tobi-Bueck/customer-support-tickets</span> — customer message, first reply, queue label.</p>
+<p>Four MCP tools over stdio and no LLM in the server: the host supplies the model, the server supplies grounded facts and refusals. Corpus: <span class="n">40,047</span> bilingual (en/de) tickets from <span class="k">Tobi-Bueck/customer-support-tickets</span>, customer message, first reply, queue label. It is synthetic, built for classifier training.</p>
 <ul>
-<li><span class="k">get_schema</span> — columns, categorical values, and an explicit <span class="k">cannot_answer</span> list (no timestamps, no customer ID, no money) so the host refuses rather than confabulates.</li>
-<li><span class="k">run_sql</span> — one read-only SELECT against DuckDB. The schema omits the positional <span class="k">tag_1..8</span> columns in favour of a long <span class="k">ticket_tags</span> table.</li>
-<li><span class="k">find_similar_tickets</span> — <span class="k">multilingual-e5-small</span>, mean-centred so unrelated pairs score ~0.0 rather than ~0.82; brute-force cosine over <span class="n">31,625</span> train-split vectors. Below a <span class="n">0.47</span> floor it returns <span class="k">no_precedent</span>.</li>
-<li><span class="k">suggest_routing</span> — k=1 nearest-neighbour vote (k swept on val; larger k floods small queues with the majority class), with two confidence signals: top-1 similarity and top-3 neighbour agreement.</li>
+<li><span class="k">get_schema</span>: columns, their values, where the rows came from (61,765 downloaded, 40,047 served), and an explicit <span class="k">cannot_answer</span> list (no timestamps, customer ID, assignee or money), so the host refuses instead of confabulating.</li>
+<li><span class="k">run_sql</span>: one read-only SELECT against DuckDB.</li>
+<li><span class="k">find_similar_tickets</span>: <span class="k">multilingual-e5-small</span>, mean-centred (unrelated pairs score ~0, not ~0.8); exact search over <span class="n">31,625</span> train-split vectors. Below a <span class="n">0.47</span> floor: <span class="k">has_precedent: false</span>. Every hit carries <span class="k">reply_state</span>.</li>
+<li><span class="k">suggest_routing</span>: k=1 nearest-neighbour vote (k swept on val; larger k floods small queues), with two confidence figures, top-1 similarity and top-3 agreement, fitted on validation and checked on test.</li>
 </ul>
-<p>Pipeline: 3 CSVs → 8 stages → DuckDB + npz index, ~80s, deterministic, offline. Every threshold and confidence band is derived on the val split and written to a file the server reads.</p></section>
+<p>Fetch, eight stages, DuckDB and index: ~80s, deterministic, offline. Every threshold and metric the tools state is rendered from the build's files. Nothing here governs whether the host calls a tool, only what it gets back.</p></section>
 
 <section><h2>B. Why</h2>
-<p>The data is free text plus four categorical fields. Retrieval fits the text — <i>how was something like this handled?</i> — and SQL fits the fields. Neither answers both kinds of question, so the server does both and the host chooses.</p>
-<p>Deliberately avoided:</p>
+<p><b>Support over Churn</b> because Churn is one numeric table and SQL over it is solved; tickets are text plus fields, so retrieval fits the text, SQL fits the fields, and the host chooses. Three things deliberately avoided:</p>
 <ul>
-<li><b>An LLM server-side.</b> The host already has one. A second would double cost per call and make every tool non-deterministic and unevaluable. The one LLM call in the project — labelling 39,739 answers — runs once, offline; its output is committed.</li>
-<li><b>A fine-tuned classifier for routing.</b> It would likely score higher; this corpus was published for exactly that. But it returns a softmax with no evidence. kNN returns the neighbours, so a user can check the answer and neighbour agreement becomes a second confidence signal. And the label space isn't fixed: add a queue, re-index; a classifier retrains.</li>
-<li><b>A reranker.</b> The ranking bias that suggested one was a bug: subject-less tickets were 27% of top-1 hits at a 10% base rate, because concatenating <span class="k">subject + body</span> made two document populations that don't compete fairly. Embedding body only fixed it for 0.006 macro-F1.</li>
+<li><b>An LLM server-side.</b> The host already has one. A second would double the cost per call and make every tool non-deterministic and unevaluable. The one LLM pass, labelling 39,739 first replies as dead end or not (E), ran once; its output is committed.</li>
+<li><b>A fine-tuned classifier.</b> It would likely score higher, but returns a softmax with no evidence. kNN returns the neighbours, so a user can check the answer, and neighbour agreement becomes a second confidence signal.</li>
+<li><b>A reranker.</b> The bias that suggested one was a bug: <span class="k">subject + body</span> over-ranked subject-less tickets 2.6×; embedding the body alone removed it.</li>
 </ul></section>
 
 <section><h2>C. Production</h2>
+<p>The four tool contracts stay; everything beneath them changes.</p>
 <ul>
-<li><b>Source.</b> CSVs → DuckDB becomes Zendesk/Jira → Snowflake. The index rebuilds on an Airflow schedule and the abstention floor recalibrates with it — the floor is corpus-relative and coverage grows.</li>
-<li><b>Transport.</b> stdio → streamable HTTP behind FastAPI: same tool implementations, second entrypoint. <span class="k">draft_reply</span> lives there too — a webhook has no host model, so generation moves server-side on that path only.</li>
-<li><b>Access control.</b> None today — single-user, local. In production, two layers. SQL is covered by Snowflake row-access policies, <i>provided the query runs as the caller, not a service account</i>. The vector index is not: it's a copy of the rows outside the policy boundary, so row policies never see a vector search. Re-gate it separately — resolve the caller's scope to attributes (tenant, region), mask the index, then take top-k. Post-filtering leaks existence and guts top-k for narrow scopes; the <span class="k">queue</span> filter already works this way.</li>
-<li><b>Recency.</b> A three-year-old precedent may describe a dead product. Recency should weight the ranking, not exclude.</li>
-<li><b>Scale.</b> Brute force measures 0.4 ms at 32k vectors, 8 ms at 1M, 41 ms at 5M. Past ~2M, or once the index outgrows one machine's RAM, an ANN index earns its recall cost. Not before — approximate search adds an error inseparable from the embedding's own.</li>
-<li><b>A limit worth stating.</b> Nothing here governs whether the host calls a tool, only what it gets back. A model can answer from its own weights, and no floor applies.</li>
+<li><b>Source.</b> CSVs → DuckDB becomes Zendesk/Jira → Snowflake. The index rebuilds on an Airflow schedule and the corpus-relative floor recalibrates with it.</li>
+<li><b>Transport.</b> stdio → streamable HTTP: same tool code, second entrypoint, and where a <span class="k">draft_reply</span> tool would live, since a webhook has no host model.</li>
+<li><b>Access control.</b> None today. In production, SQL is covered by Snowflake row-access policies <i>if the HTTP entrypoint opens the session with the caller's own SSO token</i>. The vector index is a copy of rows outside that boundary, so re-gate it: resolve the caller's scope, mask the index, then take top-k. Post-filtering leaks existence and guts top-k for narrow scopes.</li>
+<li><b>Recency.</b> Weight the ranking by age, do not exclude: a three-year-old precedent may describe a dead product.</li>
+<li><b>Scale.</b> Brute force measures 0.4 ms at 32k vectors and stays under 10 ms to about a million; an approximate index adds an error inseparable from the embedding's own, so not before.</li>
 </ul></section>
 </div>
 
 <section class="span"><h2>D. Risks</h2>
 <table>
-<tr><td class="l">AI agent drafts a reply with no real precedent</td><td>Floor 0.47, derived on val: accepts <span class="n">97.8%</span> of real tickets, rejects 20/20 off-topic queries. Below it, <span class="k">no_precedent</span> and no draft material.</td></tr>
-<tr><td class="l">Confidence misread on typed input</td><td>Handwritten text scores ~28% lower than the corpus's generated text whatever its topic, so a similarity band calibrated on tickets misreads a typed question. Top-3 agreement does not fall across that shift. Both are returned; when they diverge by &gt;0.15 the response says which to trust.</td></tr>
-<tr><td class="l">Source language label wrong on 10% of rows</td><td><span class="n">4,204</span> tickets labelled <span class="k">de</span> carry English text — one-directional, both source files, found by inspecting one random row. <span class="k">language</span> is re-detected from the text (function words: body, then answer, then label); the original stays as <span class="k">language_label</span> so the defect is queryable. The German score below is on the corrected slice.</td></tr>
-<tr><td class="l">Silently wrong tag aggregates</td><td>Positional <span class="k">tag_1..8</span> make <span class="k">GROUP BY tag_1</span> run clean and wrong. Those columns are absent from the served schema; <span class="k">ticket_tags</span> holds one row per (ticket, tag), spellings folded, comma-joined cells split.</td></tr>
-<tr><td class="l">SQL reads files or mutates</td><td>Read-only connection · <span class="k">enable_external_access=false</span> · <span class="k">lock_configuration=true</span> · exactly one SELECT via <span class="k">extract_statements</span>. Capability removed, not function names blacklisted: <span class="k">SELECT * FROM read_csv(...)</span> is a SELECT, and <span class="k">SELECT 1; DROP TABLE x</span> runs both halves in one call.</td></tr>
-<tr><td class="l">Memorised test set inflates scores</td><td>8,357 tickets appear in two source files. Split first and ~28% of the test set has an identical twin in training. Dedup precedes the split; the index holds train only.</td></tr>
-<tr><td class="l">German quietly worse than English</td><td>Every metric sliced by language. Found: <span class="n">0.782</span> en / <span class="n">0.542</span> de macro-F1.</td></tr>
+<tr><td class="l">An agent drafts a reply with no real precedent</td><td>Floor <span class="n">0.47</span>, fitted on validation: accepts <span class="n">97.8%</span> of real tickets, rejects 20 of 20 off-topic queries. Below it, no draft material. Typed questions score ~0.18 lower than tickets whatever their topic, partly because they are shorter, so for them the floor is advisory.</td></tr>
+<tr><td class="l">A confidence figure is over-trusted</td><td>Both fitted on validation and checked on test: in the upper bands similarity holds within 0.006 while agreement runs 0.034 high, so the tool calls that one a ceiling. When they differ by &gt;0.15 the response names the lower as the conservative read.</td></tr>
+<tr><td class="l">Source language label wrong on 10% of rows</td><td><span class="n">4,204</span> tickets labelled <span class="k">de</span> carry English text. <span class="k">language</span> is re-detected from the text; the original stays as <span class="k">language_label</span> so the defect is queryable.</td></tr>
+<tr><td class="l">Silently wrong tag aggregates</td><td>Positional <span class="k">tag_1..8</span> make <span class="k">GROUP BY tag_1</span> run clean and wrong. Not served; <span class="k">ticket_tags</span> holds one row per (ticket, tag). The wrong query is unwritable, not discouraged.</td></tr>
+<tr><td class="l">SQL reads files or mutates</td><td>Read-only, external access off, config locked, one SELECT via the parser, a cursor and limits per call. Capability removed, not names blacklisted. Residual: metadata functions reveal the database path.</td></tr>
+<tr><td class="l">Memorised test set inflates scores</td><td>8,357 tickets appear in both multi-language files; split first and ~28% of test has a twin in training, so dedup precedes the split and the index holds train only. Beyond exact copies, <span class="n">55%</span> of test tickets have a paraphrase in the index; on the rest, macro-F1 is 0.414. Routing is partly lookup.</td></tr>
+<tr><td class="l">German quietly worse than English</td><td><span class="n">0.782</span> en / <span class="n">0.542</span> de macro-F1. Coverage, not the encoder: retrieval is monolingual (96% of German queries' nearest neighbour is German) and the German slice of the index is 2.3× smaller; English cut to that size scores 0.545. Fix: more German tickets, not a bigger model.</td></tr>
 </table></section>
 
 <div class="cols">
 <section><h2>E. Business impact</h2>
-<p>The expensive thing in a support queue is elapsed time, not agent minutes. A ticket settled in one exchange costs hours; one that needs three costs days, and the first reply decides which. <i>"Send the system logs and your account number"</i> can be acted on. <i>"Please provide details"</i> cannot — the customer doesn't know what to send, so an exchange is spent finding out.</p>
-<p><b><span class="n">49.8%</span> of first replies in this archive are the second kind</b> — they neither resolve the ticket nor name anything fetchable. Each is an avoidable round trip. <i>(Haiku 4.5 over all 39,739 answers, $9.53; 55% in a 40-answer hand-labelled sample. Four-way label agreement 70%; the collapsed dead-end / actionable / resolved split 75%, distributionally unbiased — <span class="k">reports/labels.md</span>.)</i></p>
-<p><span class="k">reply_state</span> marks each retrieved precedent, so a draft copies the replies that ended the exchange rather than the ones that extended it. With full threads instead of first replies only, the round-trip count becomes measurable rather than inferred.</p>
-<p><b>At CHEQ.</b> The Data &amp; AI team will be asked to put internal data behind LLM tools. The constraint isn't access — it's whether a stakeholder can trust a number without the data team underwriting it. This repo is the contract for that: refuse what the data can't answer, calibrate every threshold on held-out data, publish the confidence next to the label.</p></section>
+<p>Value is elapsed time, not agent minutes: a ticket settled in one exchange costs hours, one that needs three costs days, and the first reply decides which. <i>"Send the system logs and your account number"</i> can be acted on. <i>"Please provide details"</i> cannot.</p>
+<p><b><span class="n">49.8%</span> of first replies in this archive are the second kind</b>: they neither resolve the ticket nor name anything fetchable. <i>(Haiku 4.5 over 39,739 answers, $9.53; on the 40 I read by hand, model and reader both count 22 dead ends.)</i> The archive is synthetic, so the rate describes the generator. What transfers is the measurement: the same labeller over CHEQ's real first replies gives the true rate in a day; <span class="k">reply_state</span> on every precedent lets a draft copy the replies that ended the exchange, not the ones that extended it.</p>
+<p><b>At CHEQ, two uses of one pattern.</b> Support agents draft first replies from precedent over CHEQ's own archive (C, Source), with the dead-end rate before and after as the first business number. And the Data &amp; AI team puts internal Snowflake data behind Claude for stakeholders (a CSM asking why an account's invalid-traffic share jumped) with this server as the template: refuse what the data can't answer, fit every threshold on held-out data, publish the confidence next to the label, so stakeholders trust numbers the data team did not hand-check.</p></section>
 </div>
 
 <div class="foot">
-<b>Runs and evaluates offline.</b> <span class="k">make build</span> 80s · <span class="k">make eval</span> 30s · no key except for the one-off labelling pass. Routing <span class="n">0.707</span> macro-F1 / 0.732 accuracy over 10 queues against 0.045 / 0.293 for the majority baseline. Every number here is generated into <span class="k">reports/</span>.
+<b>Runs, evaluates and tests offline.</b> Routing <span class="n">0.707</span> macro-F1 over 10 queues against 0.045 for always answering the largest queue · <span class="k">make build</span> 80s · <span class="k">make eval</span> 30s · <span class="k">make test</span> 2s · every evaluation number here is generated into <span class="k">reports/</span>.
 </div>

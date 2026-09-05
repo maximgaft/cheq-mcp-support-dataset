@@ -64,12 +64,14 @@ exact-body dedup (stage 04) cannot see, and routing accuracy on those is lookup,
 not generalisation - so the report separates the two."""
 TWIN_SENSITIVITY = [0.25, TWIN_JACCARD, 0.45]
 CHUNK = 500
+COVERAGE_DRAWS = 5   # random English subsets of the German slice's size
 WORD = re.compile(r"[a-zA-ZäöüßÄÖÜ]{4,}")
 
 
-def neighbours(idx: Index, texts: list[str]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Top-TOP_N neighbour positions and similarities for each query, plus the
-    uncollapsed positions so the cost of collapsing can be measured."""
+def neighbours(idx: Index, texts: list[str]) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Top-TOP_N neighbour positions and similarities for each query, the
+    uncollapsed positions so the cost of collapsing can be measured, and the
+    centred query vectors so other checks can reuse them."""
     queries = center(embed_queries(texts, progress=True), idx.mean)
     wide = TOP_N * 4
     positions, sims, raw = [], [], []
@@ -86,7 +88,17 @@ def neighbours(idx: Index, texts: list[str]) -> tuple[np.ndarray, np.ndarray, np
         positions.append(kept)
         sims.append(np.take_along_axis(block, kept, axis=1))
         raw.append(part[:, :TOP_N])
-    return np.vstack(positions), np.vstack(sims), np.vstack(raw)
+    return np.vstack(positions), np.vstack(sims), np.vstack(raw), queries
+
+
+def top1_within(queries: np.ndarray, vectors: np.ndarray, allowed: np.ndarray) -> np.ndarray:
+    """Position of each query's nearest vector among the `allowed` positions only."""
+    out = np.empty(len(queries), dtype=np.int64)
+    for start in range(0, len(queries), CHUNK):
+        block = queries[start : start + CHUNK] @ vectors.T
+        block[:, ~allowed] = -np.inf
+        out[start : start + CHUNK] = np.argmax(block, axis=1)
+    return out
 
 
 def vote(labels: np.ndarray, positions: np.ndarray, sims: np.ndarray, k: int) -> np.ndarray:
@@ -209,7 +221,7 @@ def main() -> None:
 
     # ------------------------------------------------------------------ val
     # Everything the server will apply to a live query is decided here.
-    val_rows, val_pos, val_sims, val_pos_raw = cached["val"]
+    val_rows, val_pos, val_sims, val_pos_raw, _ = cached["val"]
     val_truth = val_rows.queue.to_numpy()
     sweep = {k: scores(val_truth, vote(queues, val_pos, val_sims, k))["macro_f1"] for k in K_SWEEP}
     best_k = max(sweep, key=sweep.get)
@@ -230,7 +242,7 @@ def main() -> None:
 
     # ----------------------------------------------------------------- test
     # Read for reporting. Nothing below feeds back into anything the server serves.
-    rows, pos, sims, _ = cached["test"]
+    rows, pos, sims, _, queries = cached["test"]
     truth = rows.queue.to_numpy()
     pred = vote(queues, pos, sims, best_k)
     correct = pred == truth
@@ -245,6 +257,30 @@ def main() -> None:
     for language in sorted(rows.language.unique()):
         mask = (rows.language == language).to_numpy()
         by_language[language] = scores(truth[mask], pred[mask])
+
+    # Is the German gap the encoder, or the size of the German slice of the index?
+    # Retrieval is monolingual in practice, so each language is served by its own
+    # slice. Cut the English slice down to the German one's size and re-score.
+    index_language = idx.meta.language.to_numpy()
+    test_language = rows.language.to_numpy()
+    monolingual = {lang: float((index_language[pos[:, 0]] == lang)[test_language == lang].mean())
+                   for lang in sorted(set(test_language))}
+    slice_size = {lang: int((index_language == lang).sum()) for lang in monolingual}
+    coverage_rng = np.random.default_rng(0)
+    en_test, de_test = test_language == "en", test_language == "de"
+    en_positions = np.flatnonzero(index_language == "en")
+    cut_scores = []
+    for _ in range(COVERAGE_DRAWS):
+        allowed = np.zeros(len(index_language), dtype=bool)
+        allowed[coverage_rng.choice(en_positions, size=slice_size["de"], replace=False)] = True
+        cut_scores.append(scores(truth[en_test], queues[top1_within(queries[en_test], idx.vectors, allowed)])["macro_f1"])
+    coverage = {
+        "en_full": by_language["en"]["macro_f1"],
+        "en_cut_to_de_size": float(np.mean(cut_scores)),
+        "en_cut_spread": (float(min(cut_scores)), float(max(cut_scores))),
+        "de_full": by_language["de"]["macro_f1"],
+        "de_own_slice": scores(truth[de_test], queues[top1_within(queries[de_test], idx.vectors, index_language == "de")])["macro_f1"],
+    }
 
     # The check: the same bands, measured on tickets the fit never saw.
     test_bands = {b["min"]: b for b in band_table(top1, correct, SIM_BANDS)}
@@ -291,7 +327,7 @@ def main() -> None:
     # signal moves when the input stops being generated text.
     handwritten = [c["query"] for c in yaml.safe_load(CASES.read_text())
                    if c["expect"] == "precedent"]
-    h_pos, h_sims, _ = neighbours(idx, handwritten)
+    h_pos, h_sims, _, _ = neighbours(idx, handwritten)
     stability = {
         "similarity": (float(top1.mean()), float(h_sims[:, 0].mean())),
         f"agreement@{AGREEMENT_N}": (float(agree.mean()),
@@ -344,6 +380,29 @@ def main() -> None:
         "|----------|--------:|---------:|---------:|",
         *[f"| {lang} | {int((rows.language == lang).sum()):,} | {m['accuracy']:.3f} | {m['macro_f1']:.3f} |"
           for lang, m in by_language.items()],
+        "",
+        "### Why German trails English: coverage, not the encoder",
+        "",
+        f"Retrieval is monolingual in practice: the nearest neighbour of a German test ticket is "
+        f"German {100 * monolingual['de']:.0f}% of the time, of an English one English "
+        f"{100 * monolingual['en']:.0f}%. So each language is served by its own slice of the index, "
+        f"and the German slice is {slice_size['en'] / slice_size['de']:.1f}x smaller "
+        f"({slice_size['de']:,} vectors against {slice_size['en']:,}). Cut the English slice down to "
+        f"the German one's size and English routing drops to the German level:",
+        "",
+        "| test tickets | index they search | macro-F1 |",
+        "|---|---|--:|",
+        f"| English | full index | {coverage['en_full']:.3f} |",
+        f"| English | English only, cut to {slice_size['de']:,} vectors (mean of {COVERAGE_DRAWS} draws, "
+        f"{coverage['en_cut_spread'][0]:.3f}-{coverage['en_cut_spread'][1]:.3f}) | {coverage['en_cut_to_de_size']:.3f} |",
+        f"| German | full index | {coverage['de_full']:.3f} |",
+        f"| German | German only ({slice_size['de']:,} vectors) | {coverage['de_own_slice']:.3f} |",
+        "",
+        f"English at German coverage scores within {abs(coverage['en_cut_to_de_size'] - coverage['de_full']):.3f} "
+        f"of German, and German loses only {coverage['de_full'] - coverage['de_own_slice']:.3f} without the "
+        "English vectors. The gap is how many "
+        "German tickets the archive holds, not how well the model reads German - so the production "
+        "fix is more German data, not a bigger model.",
         "",
         "## What the accuracy is made of: paraphrase twins",
         "",
@@ -478,6 +537,10 @@ def main() -> None:
         "priority_macro_f1": round(priority_result["macro_f1"], 4),
         "baseline_macro_f1": round(baseline["macro_f1"], 4),
         "by_language": {k: round(v["macro_f1"], 4) for k, v in by_language.items()},
+        "coverage": {"monolingual_share": {k: round(v, 4) for k, v in monolingual.items()},
+                     "index_slice_size": slice_size,
+                     "en_cut_to_de_size_macro_f1": round(coverage["en_cut_to_de_size"], 4),
+                     "de_own_slice_macro_f1": round(coverage["de_own_slice"], 4)},
         "auc": {"val": {k: round(v, 4) for k, v in val_auc.items()},
                 "test": {k: round(v, 4) for k, v in test_auc.items()}},
         "twin_jaccard": TWIN_JACCARD,

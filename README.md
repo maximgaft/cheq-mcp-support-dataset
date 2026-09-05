@@ -109,7 +109,7 @@ file, so it starts correctly from any working directory.
 | `find_similar_tickets` | Nearest past tickets **and the replies that were sent**, each tagged with `reply_state`. Below a similarity floor of 0.47, calibrated on real tickets: `has_precedent: false` and guidance |
 | `suggest_routing` | Predicted queue and priority, two fitted confidence figures, and the neighbours that decided it |
 
-Every threshold and measured figure in a tool description is rendered from the
+Every threshold and accuracy figure in a tool description is rendered from the
 files the build wrote, so the text the model reads cannot drift from the numbers
 the server applies.
 
@@ -196,7 +196,9 @@ accuracy on the test split.
 
 - [reports/routing.md](reports/routing.md): **0.707 macro-F1** across 10 queues
   (F1 averaged over the queues with equal weight, so small queues count) against
-  0.045 for always answering "Technical Support". English 0.782, German 0.542.
+  0.045 for always answering "Technical Support". English 0.782, German 0.542,
+  and the gap is index coverage, not the model: the German slice of the index
+  is 2.3× smaller, and English cut to that size scores 0.545.
 - [reports/calibration.md](reports/calibration.md): the 0.47 floor accepts
   97.8% of real tickets and rejects 20 of 20 off-topic queries.
 - [reports/labels.md](reports/labels.md): 49.8% of first replies are dead ends.
@@ -266,7 +268,9 @@ docs/       design.html (source) → design.pdf, the one-page design note · des
   label agrees 70% and is not served.
 - **Routing accuracy is partly lookup.** 55% of test tickets have a rewording of
   themselves in the index; on the other 45%, macro-F1 is 0.414.
-- **German routing trails English by 0.24 macro-F1.**
+- **German routing trails English by 0.24 macro-F1.** The cause is coverage:
+  the archive holds 2.3× fewer German tickets, and English cut to the same
+  count scores the same as German. More German data closes it, not a bigger model.
 - The floor **wrongly refuses about 40% of hand-typed questions**;
   `has_precedent` is a refusal for a real ticket and advisory for typed text.
 - **The floor governs what the server returns, not whether the host calls it.**
