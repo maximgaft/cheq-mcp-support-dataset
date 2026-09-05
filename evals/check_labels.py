@@ -86,6 +86,15 @@ def main() -> None:
         f"the adjudicated sample says {100 * sum(1 for i in ids if gold[i]['label'] == 'information_request') / len(ids):.0f}%, "
         "so it over-calls the class it never misses.",
         "",
+        "## The four-way labels across the corpus",
+        "",
+        "| `kind` | share of 39,739 labelled answers |",
+        "|---|---:|",
+        *[f"| `{k}` | {100 * v:.1f}% |" for k, v in labels.kind.value_counts(normalize=True).items()],
+        "",
+        "`not_a_support_reply` is customer text sitting in the answer column; those rows are "
+        "unusable as precedent and count as dead ends.",
+        "",
         "## Why the collapsed view is still usable",
         "",
         "That confusion moves tickets *within* `dead_end` — a vague ask and a bare "

@@ -131,7 +131,7 @@ def main() -> None:
         "",
         f"So the floor is right for the input shape it was calibrated on, and wrong for "
         f"any other. On real tickets - the production shape, where a webhook delivers an "
-        f"actual ticket - it accepts {100 * (real >= floor).mean():.0f}% and rejects "
+        f"actual ticket - it accepts {100 * (real >= floor).mean():.1f}% and rejects "
         f"{100 * (1 - (negative >= floor).mean()):.0f}% of off-topic queries. Applied to a "
         f"hand-typed question it wrongly rejects **{100 * false_reject:.0f}%** of "
         f"legitimate on-topic ones.",
