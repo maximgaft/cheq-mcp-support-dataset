@@ -3,6 +3,7 @@
 import hashlib
 import importlib
 
+import certifi
 import numpy as np
 import pandas as pd
 import pytest
@@ -54,6 +55,17 @@ def test_sha256_streams_the_whole_file(tmp_path):
     data = bytes(range(256)) * 10_000   # 2.5 MB, crosses the 1 MB chunk boundary
     path.write_bytes(data)
     assert fetch00.sha256(path) == hashlib.sha256(data).hexdigest()
+
+
+def test_ca_bundle_honours_ssl_cert_file_then_falls_back_to_certifi(monkeypatch, tmp_path):
+    corporate = tmp_path / "corporate-roots.pem"
+    corporate.write_text("")
+    monkeypatch.setenv("SSL_CERT_FILE", str(corporate))
+    assert fetch00.ca_bundle() == str(corporate)
+    monkeypatch.setenv("SSL_CERT_FILE", "")          # an empty value is not a bundle
+    assert fetch00.ca_bundle() == certifi.where()
+    monkeypatch.delenv("SSL_CERT_FILE")
+    assert fetch00.ca_bundle() == certifi.where()
 
 
 def test_canonical_spelling_is_the_most_common_then_alphabetical():

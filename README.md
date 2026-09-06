@@ -27,7 +27,7 @@ uv sync          # installs Python 3.14 and the packages
 make build       # fetch the data (checksummed) + 8 stages, ~2 min first run, ~80s after
                  # the first run also downloads ~470 MB of embedding weights - it looks like a hang; it isn't
 make eval        # routing eval, label agreement, question set, MCP smoke test -> reports/  (~30s)
-make test        # 75 unit tests, no built data needed  (~2s)
+make test        # 80 unit tests, no built data needed  (~2s)
 ```
 
 Timings are from an M-series MacBook; a CPU-only laptop embeds more slowly and
@@ -45,8 +45,8 @@ uv run pytest -q
 
 ## Requirements
 
-- [uv](https://docs.astral.sh/uv/). It installs Python 3.14 itself from
-  `.python-version`; whatever Python is on your machine is not used.
+- [uv](https://docs.astral.sh/uv/). It uses a Python 3.14 already on the machine
+  if there is one and otherwise installs it, from `.python-version`.
 - A platform with a torch wheel: Apple Silicon macOS, Linux x86_64 or aarch64,
   Windows x86_64. Linux and Windows get the CPU build; no CUDA is needed
   anywhere. On Apple Silicon the embedding runs on the GPU via Metal.
@@ -69,13 +69,28 @@ uv run pytest -q
 
 ## Environment variables
 
-None are required. Two are optional:
+None are required.
 
 | variable | default | purpose |
 |---|---|---|
 | `CHEQ_DB` | `data/interim/08_tickets.duckdb` | point the server at a different database file |
 | `ANTHROPIC_API_KEY` | — | **only** for `make label` (the 40-ticket gold set), `make label-all` (the whole corpus, which wrote the committed parquet) and `make host-eval` (below) |
 | `CHEQ_HOST_MODEL` | `claude-opus-5` | the model `make host-eval` drives |
+| `SSL_CERT_FILE` | certifi's Mozilla root bundle | the root certificates the two downloads in `make build` are verified against: the CSVs through urllib ([pipeline/00_fetch.py](pipeline/00_fetch.py)) and the model through httpx. A python.org Python with no certificates installed trusts nothing, which is why certifi is the default rather than the interpreter's own store |
+| `UV_NATIVE_TLS` | — | `1` makes `uv sync` trust the system keychain instead of its own bundle |
+
+**Behind a TLS-inspecting proxy** (Netskope, Zscaler and the like) both downloads
+fail with `CERTIFICATE_VERIFY_FAILED`: the proxy re-signs every certificate with its
+own root, which the Mozilla bundle does not carry. Export that root from the system
+keychain, append it to certifi's bundle and point `SSL_CERT_FILE` at the result;
+`UV_NATIVE_TLS=1` does the same for `uv sync` if the package index is inspected too.
+On macOS, with Netskope's root as the example:
+
+```bash
+security find-certificate -a -c caadmin.netskope.com -p /Library/Keychains/System.keychain > proxy-root.pem
+cat "$(uv run python -m certifi)" proxy-root.pem > ca-bundle.pem
+export SSL_CERT_FILE="$PWD/ca-bundle.pem" UV_NATIVE_TLS=1
+```
 
 ## Connect it to Claude Code
 
@@ -226,7 +241,7 @@ in one passing answer they are wrong (1,478 and 24% where the database says 1,18
 
 ## Tests
 
-`make test` runs 75 tests in about two seconds and needs no built data: one test
+`make test` runs 80 tests in about two seconds and needs no built data: one test
 per layer of the SQL guard, so removing a layer fails exactly its test; the
 retrieval and routing rules on a six-vector index with the model stubbed out; the
 pure pipeline functions; the embedding model's required `query:`/`passage:`

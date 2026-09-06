@@ -9,6 +9,7 @@ A file that is already present and matches its checksum is not fetched again.
 """
 
 import hashlib
+import os
 import ssl
 import sys
 import urllib.request
@@ -37,11 +38,21 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def ca_bundle() -> str:
+    """The root certificates the download is verified against.
+
+    A python.org build with no certificates installed trusts nothing and fails every
+    HTTPS fetch, so certifi's Mozilla bundle is the default rather than the interpreter's.
+    SSL_CERT_FILE wins when set: that is the rule httpx applies to the model download,
+    so one variable covers both fetches behind a TLS-inspecting proxy whose root the
+    Mozilla bundle does not carry.
+    """
+    return os.environ.get("SSL_CERT_FILE") or certifi.where()
+
+
 def download(url: str, path: Path) -> None:
-    # Verify against certifi's CA bundle, not the interpreter's: a python.org build
-    # with no certificates installed trusts nothing and fails every HTTPS fetch.
     # urllib follows Hugging Face's 307 redirect to the resolve-cache URL.
-    context = ssl.create_default_context(cafile=certifi.where())
+    context = ssl.create_default_context(cafile=ca_bundle())
     with urllib.request.urlopen(url, context=context) as response, path.open("wb") as out:
         for chunk in iter(lambda: response.read(1 << 20), b""):
             out.write(chunk)
